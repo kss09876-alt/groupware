@@ -104,7 +104,8 @@ async function loadModule(name, force) {
   if (cache[name] && !force) return cache[name];
   setSyncStatus("동기화 중...", true);
   try {
-    const data = await Drive.readCollection(dataFolderId, FILES[name], DEFAULTS[name]);
+    let data = await Drive.readCollection(dataFolderId, FILES[name], DEFAULTS[name]);
+    if (name === "corp") data = normalizeCorp(data);
     cache[name] = data;
     setSyncStatus("동기화됨", false);
     return data;

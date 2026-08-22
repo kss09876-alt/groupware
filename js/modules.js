@@ -57,6 +57,25 @@ const DEFAULTS = {
   sns: { items: [] },
 };
 
+// 예전에 저장된 corp.json(구버전 스키마)을 불러와도 깨지지 않도록,
+// 새로 추가된 필드가 없으면 기본값으로 채워줍니다.
+function normalizeCorp(c) {
+  const d = DEFAULTS.corp;
+  const out = { ...d, ...c };
+  out.branches = c.branches || [];
+  out.registeredPurposes = c.registeredPurposes || [];
+  out.shareholders = c.shareholders || [];
+  out.officers = c.officers || [];
+  out.taxSchedule = c.taxSchedule || d.taxSchedule;
+  out.articleFlags = { ...d.articleFlags, ...(c.articleFlags || {}) };
+  out.meetings = { ...d.meetings, ...(c.meetings || {}) };
+  out.documents = { ...d.documents, ...(c.documents || {}) };
+  Object.keys(d.documents).forEach((key) => {
+    out.documents[key] = { ...d.documents[key], ...(out.documents[key] || {}) };
+  });
+  return out;
+}
+
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
