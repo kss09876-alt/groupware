@@ -18,13 +18,37 @@ const DEFAULTS = {
     foundedDate: "",
     fiscalYear: "1월 ~ 12월",
     capital: "",
+    capitalShares: "",
+    parValue: "",
     address: "",
+    branches: [],
     shareholders: [],
     officers: [],
     taxSchedule: [
       { name: "법인세", desc: "3월 말일까지 연 1회 신고·납부" },
       { name: "부가세", desc: "1, 4, 7, 10월 25일까지 연 4회 신고·납부" },
     ],
+    articleFlags: {
+      thirdPartyIssue: false,
+      preferredStock: false,
+      stockOption: false,
+      transferRestriction: false,
+    },
+    meetings: {
+      annual: "매년 1. 1. ~ 3. 31.에 1번 개최",
+      special: "필요할 때마다 개최",
+      board: "이사회 없음",
+    },
+    disclosureMethod: "",
+    registeredPurposes: [],
+    stockOptionRule: "정관 & 등기부에 스톡옵션 규정 없음",
+    transferRestrictionRule: "정관 & 등기부에 주식양도제한 규정 없음",
+    documents: {
+      registry: { label: "법인등기부등본", fileId: null, fileName: null, webViewLink: null, updatedAt: null },
+      articles: { label: "정관", fileId: null, fileName: null, webViewLink: null, updatedAt: null },
+      bizReg: { label: "사업자등록증", fileId: null, fileName: null, webViewLink: null, updatedAt: null },
+      shareholderList: { label: "주주명부", fileId: null, fileName: null, webViewLink: null, updatedAt: null },
+    },
   },
   notice: { items: [] },
   calendar: { items: [] },
@@ -104,39 +128,114 @@ const Modules = {
   // ---------------- 법인정보 ----------------
   async corp(ctx) {
     const c = await ctx.load("corp");
+    const flags = c.articleFlags || {};
+    const meetings = c.meetings || {};
+    const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("ko-KR") : null);
+    const docRow = (key, doc) => `
+      <div class="doc-row">
+        <div class="doc-info">
+          <span class="doc-icon">📄</span>
+          <div>
+            <div class="doc-name">${esc(doc.label)}</div>
+            <div class="doc-meta">${doc.updatedAt ? `${fmtDate(doc.updatedAt)} 업데이트` : "미등록"}</div>
+          </div>
+        </div>
+        <div class="doc-actions">
+          ${doc.webViewLink ? `<a class="btn btn-tiny btn-secondary" href="${esc(doc.webViewLink)}" target="_blank" rel="noopener">다운로드</a>` : ""}
+          <label class="btn btn-tiny btn-primary doc-upload-label">
+            ${doc.fileId ? "재업로드" : "업로드"}
+            <input type="file" class="doc-upload-input" data-doc-key="${key}" hidden>
+          </label>
+        </div>
+      </div>`;
+
     return `
-      <div class="toolbar"><button class="btn btn-primary" id="editCorpBtn">법인정보 수정</button></div>
-      <div class="grid grid-2">
+      <div class="toolbar"><button class="btn btn-primary" id="editCorpBtn">기본정보 수정</button></div>
+      <div class="grid grid-3 corp-grid">
+        <div class="panel span-2">
+          <h3>${esc(c.name) || "법인명 미등록"}</h3>
+          ${Object.entries(c.documents || {}).map(([key, doc]) => docRow(key, doc)).join("")}
+        </div>
         <div class="panel">
-          <h3>기본정보</h3>
-          <table class="kv"><tbody>
-            <tr><th>회사명</th><td>${esc(c.name) || "-"}</td></tr>
-            <tr><th>영문명</th><td>${esc(c.engName) || "-"}</td></tr>
-            <tr><th>법인등록번호</th><td>${esc(c.regNo) || "-"}</td></tr>
-            <tr><th>사업자등록번호</th><td>${esc(c.bizNo) || "-"}</td></tr>
-            <tr><th>설립일</th><td>${esc(c.foundedDate) || "-"}</td></tr>
+          <div class="stat-label">등록번호</div>
+          <div class="corp-id">${esc(c.regNo) || "-"}</div>
+          <div class="stat-label" style="margin-top:14px">사업자등록번호</div>
+          <div class="corp-id">${esc(c.bizNo) || "-"}</div>
+          <table class="kv" style="margin-top:14px"><tbody>
+            <tr><th>법인설립일</th><td>${esc(c.foundedDate) || "-"}</td></tr>
             <tr><th>사업연도</th><td>${esc(c.fiscalYear) || "-"}</td></tr>
-            <tr><th>자본금</th><td>${esc(c.capital) || "-"}</td></tr>
-            <tr><th>본점 주소</th><td>${esc(c.address) || "-"}</td></tr>
+          </tbody></table>
+        </div>
+
+        <div class="panel capital-panel">
+          <div class="stat-label">자본금</div>
+          <div class="capital-amount">${esc(c.capital) || "-"}</div>
+          <div class="muted" style="margin-left:0">${esc(c.capitalShares) || ""}${c.capitalShares && c.parValue ? " · " : ""}${esc(c.parValue) || ""}</div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="margin-bottom:8px"><h3 style="margin:0">주주 (총 ${c.shareholders.length}명)</h3><button class="btn btn-tiny btn-secondary" id="addShareholderBtn">+ 추가</button></div>
+          ${c.shareholders.map((s, i) => `<div class="list-row">${esc(s.name)} <span class="tag">${esc(s.percent)}%</span><button class="btn btn-tiny btn-danger" data-del-shareholder="${i}">삭제</button></div>`).join("") || `<div class="empty">등록된 주주가 없어요.</div>`}
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="margin-bottom:8px"><h3 style="margin:0">임원 (총 ${c.officers.length}명)</h3><button class="btn btn-tiny btn-secondary" id="addOfficerBtn">+ 추가</button></div>
+          ${c.officers.map((o, i) => `<div class="list-row">${esc(o.name)} <span class="tag">${esc(o.role)}</span> ${esc(o.term || "")}<button class="btn btn-tiny btn-danger" data-del-officer="${i}">삭제</button></div>`).join("") || `<div class="empty">등록된 임원이 없어요.</div>`}
+        </div>
+
+        <div class="panel">
+          <h3>정관</h3>
+          <div class="flag-row">사업연도는 ${esc(c.fiscalYear) || "-"}</div>
+          <div class="flag-row">제3자 신주발행 근거규정 ${flags.thirdPartyIssue ? "있음 ✓" : "없음 ✕"}</div>
+          <div class="flag-row">우선주 발행 근거규정 ${flags.preferredStock ? "있음 ✓" : "없음 ✕"}</div>
+          <div class="flag-row">스톡옵션 규정 ${flags.stockOption ? "있음 ✓" : "없음 ✕"}</div>
+          <div class="flag-row">제3자 주식양도제한 규정 ${flags.transferRestriction ? "있음 ✓" : "없음 ✕"}</div>
+        </div>
+        <div class="panel">
+          <h3>주주총회 · 이사회</h3>
+          <table class="kv"><tbody>
+            <tr><th>정기주주총회</th><td>${esc(meetings.annual) || "-"}</td></tr>
+            <tr><th>임시주주총회</th><td>${esc(meetings.special) || "-"}</td></tr>
+            <tr><th>이사회</th><td>${esc(meetings.board) || "-"}</td></tr>
           </tbody></table>
         </div>
         <div class="panel">
           <h3>세금일정</h3>
           ${c.taxSchedule.map((t) => `<div class="list-row"><b>${esc(t.name)}</b>&nbsp;${esc(t.desc)}</div>`).join("") || `<div class="empty">등록된 일정이 없어요.</div>`}
         </div>
+
         <div class="panel">
-          <h3>주주 (총 ${c.shareholders.length}명)</h3>
-          ${c.shareholders.map((s) => `<div class="list-row">${esc(s.name)} <span class="tag">${esc(s.percent)}%</span></div>`).join("") || `<div class="empty">등록된 주주가 없어요.</div>`}
+          <div class="toolbar" style="margin-bottom:8px"><h3 style="margin:0">본점 · 지점</h3><button class="btn btn-tiny btn-secondary" id="addBranchBtn">+ 지점 추가</button></div>
+          <div class="list-row">본점 <span class="muted">${esc(c.address) || "미등록"}</span></div>
+          ${c.branches.map((b, i) => `<div class="list-row">지점 <span class="muted">${esc(b)}</span><button class="btn btn-tiny btn-danger" data-del-branch="${i}">삭제</button></div>`).join("")}
         </div>
         <div class="panel">
-          <h3>임원 (총 ${c.officers.length}명)</h3>
-          ${c.officers.map((o) => `<div class="list-row">${esc(o.name)} <span class="tag">${esc(o.role)}</span> ${esc(o.term || "")}</div>`).join("") || `<div class="empty">등록된 임원이 없어요.</div>`}
+          <h3>상호</h3>
+          <table class="kv"><tbody>
+            <tr><th>한글</th><td>${esc(c.name) || "-"}</td></tr>
+            <tr><th>영문</th><td>${esc(c.engName) || "-"}</td></tr>
+          </tbody></table>
+          <h3 style="margin-top:16px">공고방법</h3>
+          <div class="list-row">${esc(c.disclosureMethod) || "미등록"}</div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="margin-bottom:8px"><h3 style="margin:0">등록부상 목적</h3><button class="btn btn-tiny btn-secondary" id="addPurposeBtn">+ 추가</button></div>
+          ${c.registeredPurposes.map((p, i) => `<div class="list-row">${esc(p)}<button class="btn btn-tiny btn-danger" data-del-purpose="${i}">삭제</button></div>`).join("") || `<div class="empty">등록된 목적이 없어요.</div>`}
+        </div>
+
+        <div class="panel">
+          <h3>스톡옵션</h3>
+          <div class="list-row">${esc(c.stockOptionRule) || "-"}</div>
+        </div>
+        <div class="panel">
+          <h3>주식의 양도제한</h3>
+          <div class="list-row">${esc(c.transferRestrictionRule) || "-"}</div>
         </div>
       </div>
     `;
   },
 
   corpEditForm(c) {
+    const flags = c.articleFlags || {};
+    const meetings = c.meetings || {};
     return `
       <h3>법인정보 수정</h3>
       <div class="form-grid">
@@ -146,10 +245,22 @@ const Modules = {
         <label>사업자등록번호 <input id="f_bizNo" value="${esc(c.bizNo)}"></label>
         <label>설립일 <input type="date" id="f_foundedDate" value="${esc(c.foundedDate)}"></label>
         <label>사업연도 <input id="f_fiscalYear" value="${esc(c.fiscalYear)}"></label>
-        <label>자본금 <input id="f_capital" value="${esc(c.capital)}"></label>
+        <label>자본금 <input id="f_capital" value="${esc(c.capital)}" placeholder="10,000,000원"></label>
+        <label>발행주식 <input id="f_capitalShares" value="${esc(c.capitalShares)}" placeholder="총 100,000주 / 1종류"></label>
+        <label>액면가 <input id="f_parValue" value="${esc(c.parValue)}" placeholder="100,000주 X 액면금 100원"></label>
         <label>본점 주소 <input id="f_address" value="${esc(c.address)}"></label>
+        <label>공고방법 <input id="f_disclosureMethod" value="${esc(c.disclosureMethod)}" placeholder="일간아시아경제신문에 공고"></label>
+        <label>정기주주총회 <input id="f_annual" value="${esc(meetings.annual)}"></label>
+        <label>임시주주총회 <input id="f_special" value="${esc(meetings.special)}"></label>
+        <label>이사회 <input id="f_board" value="${esc(meetings.board)}"></label>
+        <label>스톡옵션 규정 <input id="f_stockOptionRule" value="${esc(c.stockOptionRule)}"></label>
+        <label>주식양도제한 규정 <input id="f_transferRestrictionRule" value="${esc(c.transferRestrictionRule)}"></label>
+        <label class="checkbox-label"><input type="checkbox" id="f_thirdPartyIssue" ${flags.thirdPartyIssue ? "checked" : ""}> 제3자 신주발행 근거규정 있음</label>
+        <label class="checkbox-label"><input type="checkbox" id="f_preferredStock" ${flags.preferredStock ? "checked" : ""}> 우선주 발행 근거규정 있음</label>
+        <label class="checkbox-label"><input type="checkbox" id="f_stockOption" ${flags.stockOption ? "checked" : ""}> 스톡옵션 규정 있음</label>
+        <label class="checkbox-label"><input type="checkbox" id="f_transferRestriction" ${flags.transferRestriction ? "checked" : ""}> 제3자 주식양도제한 규정 있음</label>
       </div>
-      <p class="hint">주주·임원 명단은 저장 후 각 카드에서 추가/삭제할 수 있도록 다음 업데이트에서 지원 예정이에요. 지금은 JSON을 드라이브에서 직접 편집할 수도 있어요.</p>
+      <p class="hint">주주·임원·지점·목적은 저장 후 법인정보 화면의 각 카드에서 "+ 추가" 버튼으로 등록할 수 있어요.</p>
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
         <button class="btn btn-primary" id="saveCorpBtn">저장</button>

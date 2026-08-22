@@ -97,8 +97,33 @@ input, select, textarea { font-family: inherit; }
 /* ---------- 공통 컴포넌트 ---------- */
 .grid { display: grid; gap: 16px; margin-bottom: 16px; }
 .grid-2 { grid-template-columns: 1fr 1fr; }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
-@media (max-width: 900px) { .grid-2, .grid-4 { grid-template-columns: 1fr; } }
+.span-2 { grid-column: span 2; }
+@media (max-width: 1100px) { .grid-3 { grid-template-columns: 1fr 1fr; } .span-2 { grid-column: span 2; } }
+@media (max-width: 900px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } .span-2 { grid-column: span 1; } }
+
+/* ---------- 법인정보 ---------- */
+.corp-id { font-size: 17px; font-weight: 700; }
+.capital-panel { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: #fff; }
+.capital-panel .stat-label { color: rgba(255,255,255,0.8); }
+.capital-amount { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+.capital-panel .muted { color: rgba(255,255,255,0.75); }
+
+.doc-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 4px; border-bottom: 1px solid #f0f1f4;
+}
+.doc-row:last-child { border-bottom: none; }
+.doc-info { display: flex; align-items: center; gap: 10px; }
+.doc-icon { font-size: 20px; }
+.doc-name { font-size: 13.5px; font-weight: 600; }
+.doc-meta { font-size: 11.5px; color: var(--muted); }
+.doc-actions { display: flex; gap: 6px; align-items: center; }
+.doc-upload-label { cursor: pointer; display: inline-flex; align-items: center; }
+
+.flag-row { font-size: 13px; padding: 6px 0; border-bottom: 1px solid #f5f5f8; color: #444; }
+.flag-row:last-child { border-bottom: none; }
 
 .panel {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);

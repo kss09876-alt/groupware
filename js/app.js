@@ -194,13 +194,129 @@ function bindTabEvents(tab) {
           foundedDate: $("#f_foundedDate").value,
           fiscalYear: $("#f_fiscalYear").value,
           capital: $("#f_capital").value,
+          capitalShares: $("#f_capitalShares").value,
+          parValue: $("#f_parValue").value,
           address: $("#f_address").value,
+          disclosureMethod: $("#f_disclosureMethod").value,
+          stockOptionRule: $("#f_stockOptionRule").value,
+          transferRestrictionRule: $("#f_transferRestrictionRule").value,
+          meetings: {
+            annual: $("#f_annual").value,
+            special: $("#f_special").value,
+            board: $("#f_board").value,
+          },
+          articleFlags: {
+            thirdPartyIssue: $("#f_thirdPartyIssue").checked,
+            preferredStock: $("#f_preferredStock").checked,
+            stockOption: $("#f_stockOption").checked,
+            transferRestriction: $("#f_transferRestriction").checked,
+          },
         });
         await saveModule("corp", c2);
         closeModal();
         refreshCurrentTab();
       });
     });
+
+    $("#addShareholderBtn")?.addEventListener("click", async () => {
+      const name = prompt("주주 이름을 입력하세요");
+      if (!name) return;
+      const percent = prompt("지분율(%)을 입력하세요", "0");
+      if (percent === null) return;
+      const c = await loadModule("corp");
+      c.shareholders.push({ name, percent });
+      await saveModule("corp", c);
+      refreshCurrentTab();
+    });
+    $$("[data-del-shareholder]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const c = await loadModule("corp");
+        c.shareholders.splice(Number(b.dataset.delShareholder), 1);
+        await saveModule("corp", c);
+        refreshCurrentTab();
+      })
+    );
+
+    $("#addOfficerBtn")?.addEventListener("click", async () => {
+      const name = prompt("임원 이름을 입력하세요");
+      if (!name) return;
+      const role = prompt("직책을 입력하세요", "사내이사");
+      if (role === null) return;
+      const term = prompt("임기를 입력하세요 (선택)", "");
+      const c = await loadModule("corp");
+      c.officers.push({ name, role, term: term || "" });
+      await saveModule("corp", c);
+      refreshCurrentTab();
+    });
+    $$("[data-del-officer]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const c = await loadModule("corp");
+        c.officers.splice(Number(b.dataset.delOfficer), 1);
+        await saveModule("corp", c);
+        refreshCurrentTab();
+      })
+    );
+
+    $("#addBranchBtn")?.addEventListener("click", async () => {
+      const addr = prompt("지점 주소를 입력하세요");
+      if (!addr) return;
+      const c = await loadModule("corp");
+      c.branches.push(addr);
+      await saveModule("corp", c);
+      refreshCurrentTab();
+    });
+    $$("[data-del-branch]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const c = await loadModule("corp");
+        c.branches.splice(Number(b.dataset.delBranch), 1);
+        await saveModule("corp", c);
+        refreshCurrentTab();
+      })
+    );
+
+    $("#addPurposeBtn")?.addEventListener("click", async () => {
+      const purpose = prompt("등록부상 목적을 입력하세요");
+      if (!purpose) return;
+      const c = await loadModule("corp");
+      c.registeredPurposes.push(purpose);
+      await saveModule("corp", c);
+      refreshCurrentTab();
+    });
+    $$("[data-del-purpose]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const c = await loadModule("corp");
+        c.registeredPurposes.splice(Number(b.dataset.delPurpose), 1);
+        await saveModule("corp", c);
+        refreshCurrentTab();
+      })
+    );
+
+    $$(".doc-upload-input").forEach((input) =>
+      input.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const key = input.dataset.docKey;
+        setSyncStatus("서류 업로드 중...", true);
+        try {
+          const c = await loadModule("corp");
+          const existing = c.documents[key] || {};
+          const uploaded = await Drive.uploadDocument(dataFolderId, file, existing.fileId || null);
+          c.documents[key] = {
+            label: existing.label,
+            fileId: uploaded.id,
+            fileName: uploaded.name,
+            webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+            updatedAt: new Date().toISOString(),
+          };
+          await saveModule("corp", c);
+          refreshCurrentTab();
+        } catch (err) {
+          console.error(err);
+          setSyncStatus("업로드 실패", false);
+          alert("서류 업로드에 실패했어요. 파일 크기가 너무 크지 않은지 확인해주세요.");
+        }
+      })
+    );
   }
 
   if (tab === "notice") {

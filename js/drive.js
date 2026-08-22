@@ -157,6 +157,42 @@ const Drive = (() => {
     });
   }
 
+  // ---- 일반 서류 파일 업로드 (등기부등본, 정관, 사업자등록증 등) ----
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // existingFileId가 있으면 그 파일의 내용을 갱신(같은 링크 유지), 없으면 새로 만듭니다.
+  async function uploadDocument(folderId, file, existingFileId) {
+    const base64Data = await fileToBase64(file);
+    const mimeType = file.type || "application/octet-stream";
+    const metadata = existingFileId
+      ? { name: file.name }
+      : { name: file.name, parents: [folderId] };
+    const boundary = "-------314159265358979323846";
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
+      JSON.stringify(metadata) +
+      `\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\nContent-Transfer-Encoding: base64\r\n\r\n` +
+      base64Data +
+      `\r\n--${boundary}--`;
+    const path = existingFileId ? `/upload/drive/v3/files/${existingFileId}` : "/upload/drive/v3/files";
+    const method = existingFileId ? "PATCH" : "POST";
+    const res = await gapi.client.request({
+      path,
+      method,
+      params: { uploadType: "multipart", fields: "id, name, webViewLink, modifiedTime" },
+      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+      body,
+    });
+    return res.result;
+  }
+
   return {
     loadGapiClient,
     initTokenClient,
@@ -167,6 +203,7 @@ const Drive = (() => {
     openFolderPicker,
     readCollection,
     writeCollection,
+    uploadDocument,
     get user() {
       return currentUser;
     },
