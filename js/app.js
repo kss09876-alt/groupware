@@ -175,6 +175,51 @@ $("#modalBackdrop").addEventListener("click", (e) => {
   if (e.target.id === "modalBackdrop") closeModal();
 });
 
+// ---------------- AI 서류 자동 분석 (법인정보) ----------------
+// 드라이브에 올라간 서류 파일을 내려받아 Cloudflare Worker(→ Gemini API)로 보내고,
+// 문서 종류(docKey)에 맞는 구조화된 정보를 돌려받습니다. 실제 corp.json 저장은
+// 사용자가 확인창(Modules.aiReviewForm)에서 "적용하기"를 눌러야만 이뤄집니다.
+async function aiExtractDocument(docKey, fileId) {
+  const { base64, mimeType } = await Drive.downloadFileAsBase64(fileId);
+  const res = await fetch(CONFIG.AI_WORKER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ docKey, mimeType, dataBase64: base64 }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || data.error) {
+    throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+  }
+  return data.fields || {};
+}
+
+// AI가 추출한 필드를 corp 객체에 병합합니다. 단순 텍스트 필드는 값이 있을 때만 덮어쓰고,
+// 목록형 필드(주주/임원/지점/목적)는 AI가 읽어낸 내용이 있으면 통째로 교체합니다.
+// (사용자가 이미 확인창에서 내용을 보고 "적용"을 눌렀다는 전제이며, 교체 후에도
+//  법인정보 화면의 +추가/삭제 버튼으로 언제든 다시 수정할 수 있습니다.)
+function applyAiFields(c, fields) {
+  const simpleKeys = [
+    "name", "engName", "regNo", "bizNo", "foundedDate", "capital",
+    "capitalShares", "parValue", "address", "disclosureMethod",
+    "stockOptionRule", "transferRestrictionRule",
+  ];
+  simpleKeys.forEach((k) => {
+    const v = fields[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") c[k] = v;
+  });
+  if (Array.isArray(fields.branches) && fields.branches.length) c.branches = fields.branches;
+  if (Array.isArray(fields.registeredPurposes) && fields.registeredPurposes.length) c.registeredPurposes = fields.registeredPurposes;
+  if (Array.isArray(fields.officers) && fields.officers.length) c.officers = fields.officers;
+  if (Array.isArray(fields.shareholders) && fields.shareholders.length) c.shareholders = fields.shareholders;
+  if (fields.articleFlags && typeof fields.articleFlags === "object") {
+    c.articleFlags = { ...c.articleFlags, ...fields.articleFlags };
+  }
+  if (fields.meetings && typeof fields.meetings === "object") {
+    c.meetings = { ...c.meetings, ...fields.meetings };
+  }
+  return c;
+}
+
 // ---------------- 탭별 이벤트 바인딩 ----------------
 function bindTabEvents(tab) {
   if (tab === "dashboard") {
@@ -315,6 +360,39 @@ function bindTabEvents(tab) {
           console.error(err);
           setSyncStatus("업로드 실패", false);
           alert("서류 업로드에 실패했어요. 파일 크기가 너무 크지 않은지 확인해주세요.");
+        }
+      })
+    );
+
+    $$(".ai-fill-btn").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        if (!CONFIG.AI_WORKER_URL) {
+          alert("아직 AI 자동 채우기가 설정되지 않았어요. README.md의 'AI 자동 채우기 설정' 안내를 따라 설정해주세요.");
+          return;
+        }
+        const key = btn.dataset.docKey;
+        const c = await loadModule("corp");
+        const doc = c.documents[key];
+        if (!doc || !doc.fileId) return;
+        const originalLabel = btn.textContent;
+        btn.textContent = "분석 중...";
+        btn.disabled = true;
+        try {
+          const fields = await aiExtractDocument(key, doc.fileId);
+          openModal(Modules.aiReviewForm(doc.label, fields));
+          $("#applyAiBtn").addEventListener("click", async () => {
+            const c2 = await loadModule("corp");
+            applyAiFields(c2, fields);
+            await saveModule("corp", c2);
+            closeModal();
+            refreshCurrentTab();
+          });
+        } catch (err) {
+          console.error(err);
+          alert("AI 분석에 실패했어요: " + (err && err.message ? err.message : "알 수 없는 오류"));
+        } finally {
+          btn.textContent = originalLabel;
+          btn.disabled = false;
         }
       })
     );

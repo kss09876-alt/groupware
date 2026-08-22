@@ -161,6 +161,7 @@ const Modules = {
         </div>
         <div class="doc-actions">
           ${doc.webViewLink ? `<a class="btn btn-tiny btn-secondary" href="${esc(doc.webViewLink)}" target="_blank" rel="noopener">다운로드</a>` : ""}
+          ${doc.fileId ? `<button class="btn btn-tiny btn-secondary ai-fill-btn" data-doc-key="${key}">🤖 AI로 채우기</button>` : ""}
           <label class="btn btn-tiny btn-primary doc-upload-label">
             ${doc.fileId ? "재업로드" : "업로드"}
             <input type="file" class="doc-upload-input" data-doc-key="${key}" hidden>
@@ -283,6 +284,30 @@ const Modules = {
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
         <button class="btn btn-primary" id="saveCorpBtn">저장</button>
+      </div>
+    `;
+  },
+
+  // AI가 서류에서 추출한 값을 사람이 확인하고 적용할지 결정하는 확인창
+  aiReviewForm(label, fields) {
+    const fmtVal = (v) => {
+      if (Array.isArray(v)) {
+        if (!v.length) return "(없음)";
+        return v.map((item) => (item && typeof item === "object" ? Object.values(item).filter(Boolean).join(" / ") : String(item))).join(", ");
+      }
+      if (v && typeof v === "object") {
+        return Object.entries(v).map(([k, vv]) => `${k}: ${typeof vv === "boolean" ? (vv ? "있음" : "없음") : vv}`).join(" · ");
+      }
+      return v === "" || v === null || v === undefined ? "(없음)" : String(v);
+    };
+    const rows = Object.entries(fields || {}).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(fmtVal(v))}</td></tr>`).join("");
+    return `
+      <h3>🤖 AI 추출 결과 확인 — ${esc(label)}</h3>
+      <p class="hint">업로드한 서류에서 AI가 아래 정보를 읽어냈어요. 내용을 확인한 뒤 적용해주세요. AI가 잘못 읽었을 수 있으니, 적용 후에도 꼭 한 번 더 확인해주세요.</p>
+      <table class="kv" style="margin-bottom:10px">${rows || `<tr><td class="empty">추출된 정보가 없어요.</td></tr>`}</table>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="applyAiBtn">이 내용으로 적용하기</button>
       </div>
     `;
   },

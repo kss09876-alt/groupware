@@ -193,6 +193,23 @@ const Drive = (() => {
     return res.result;
   }
 
+  // 이미 드라이브에 올라간 서류 파일을 base64로 내려받기 (AI 분석에 보내기 위함)
+  async function downloadFileAsBase64(fileId) {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+      headers: { Authorization: "Bearer " + accessToken },
+    });
+    if (!res.ok) throw new Error("파일을 불러오지 못했어요 (" + res.status + ")");
+    const blob = await res.blob();
+    const mimeType = blob.type || "application/octet-stream";
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    return { base64, mimeType };
+  }
+
   return {
     loadGapiClient,
     initTokenClient,
@@ -204,6 +221,7 @@ const Drive = (() => {
     readCollection,
     writeCollection,
     uploadDocument,
+    downloadFileAsBase64,
     get user() {
       return currentUser;
     },
