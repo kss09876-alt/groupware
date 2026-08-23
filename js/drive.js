@@ -25,6 +25,49 @@ const Drive = (() => {
     });
   }
 
+  // ---- 로그인 유지 ----
+  // 구글 액세스 토큰은 보통 1시간 동안 유효해요. 새로고침할 때마다 팝업으로 다시
+  // 로그인시키는 대신, 토큰과 만료 시각을 localStorage에 저장해두고 아직 유효하면
+  // 그대로 재사용합니다. (팝업 기반 재로그인은 브라우저의 팝업 차단 때문에
+  // 페이지 로드 시 자동으로 실행할 수 없어서, 캐시된 토큰 재사용이 훨씬 안정적이에요.)
+  const TOKEN_KEY = "gw_accessToken";
+  const TOKEN_EXPIRY_KEY = "gw_tokenExpiry";
+  const TOKEN_SAFETY_MARGIN_MS = 2 * 60 * 1000; // 만료 2분 전에는 새 토큰으로 취급하지 않음
+
+  function storeToken(token, expiresInSec) {
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + expiresInSec * 1000));
+  }
+
+  function clearStoredToken() {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_EXPIRY_KEY);
+  }
+
+  function getValidStoredToken() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const expiry = Number(localStorage.getItem(TOKEN_EXPIRY_KEY) || 0);
+    if (token && expiry - TOKEN_SAFETY_MARGIN_MS > Date.now()) return token;
+    return null;
+  }
+
+  // 캐시된 토큰이 아직 살아있으면 팝업 없이 바로 로그인 상태로 복원합니다.
+  async function restoreSession() {
+    const token = getValidStoredToken();
+    if (!token) return null;
+    accessToken = token;
+    gapi.client.setToken({ access_token: accessToken });
+    try {
+      await fetchUserInfo();
+      return currentUser;
+    } catch (e) {
+      // 토큰이 이미 구글 쪽에서 무효화된 경우 등
+      clearStoredToken();
+      accessToken = null;
+      return null;
+    }
+  }
+
   function initTokenClient(onToken) {
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.CLIENT_ID,
@@ -36,6 +79,7 @@ const Drive = (() => {
         }
         accessToken = resp.access_token;
         gapi.client.setToken({ access_token: accessToken });
+        storeToken(accessToken, Number(resp.expires_in) || 3600);
         await fetchUserInfo();
         onToken(currentUser, null);
       },
@@ -46,6 +90,7 @@ const Drive = (() => {
     const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
       headers: { Authorization: "Bearer " + accessToken },
     });
+    if (!res.ok) throw new Error("사용자 정보를 불러오지 못했어요 (" + res.status + ")");
     const data = await res.json();
     currentUser = { name: data.name, email: data.email, picture: data.picture };
   }
@@ -64,6 +109,7 @@ const Drive = (() => {
     }
     accessToken = null;
     currentUser = null;
+    clearStoredToken();
     Object.keys(fileIdCache).forEach((k) => delete fileIdCache[k]);
   }
 
@@ -213,6 +259,7 @@ const Drive = (() => {
   return {
     loadGapiClient,
     initTokenClient,
+    restoreSession,
     requestSignIn,
     requestSignInConsent,
     signOut,

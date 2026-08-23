@@ -21,37 +21,26 @@ function setSyncStatus(text, busy) {
 }
 
 // ---------------- 부트스트랩 ----------------
-// "로그인 유지": 이전에 로그인한 적이 있으면, 페이지를 열 때마다 로그인 버튼을 누르게 하는 대신
-// 화면 뒤에서 조용히(팝업 없이) 토큰을 다시 받아와요. 브라우저 세션이 살아있으면 대부분 그냥
-// 로그인된 상태로 이어지고, 세션이 끊겼을 때만 "Google 계정으로 로그인" 버튼이 보여요.
-const AUTO_SIGNIN_KEY = "gw_hasSignedIn";
-let silentSignInTried = false;
-
+// "로그인 유지": 구글 액세스 토큰(보통 1시간 유효)을 localStorage에 캐시해뒀다가,
+// 새로고침 시 아직 유효하면 팝업 없이 그대로 재사용해요. (참고: 브라우저는 사용자의
+// 실제 클릭 없이 뜨는 로그인 팝업을 차단하기 때문에, "페이지 로드 시 자동으로 팝업 로그인"
+// 방식은 동작하지 않아요 — 그래서 토큰 캐시 방식으로 구현했어요.) 캐시된 토큰이 만료되면
+// (보통 1시간 뒤) "Google 계정으로 로그인" 버튼을 한 번 눌러주셔야 해요.
 window.addEventListener("load", async () => {
   if (!CONFIG.CLIENT_ID.includes(".apps.googleusercontent.com") || CONFIG.CLIENT_ID.startsWith("YOUR_")) {
     $("#setupWarning").style.display = "block";
   }
 
-  const hasSignedInBefore = !!localStorage.getItem(AUTO_SIGNIN_KEY);
-  if (hasSignedInBefore) {
-    $("#loginStatus").textContent = "로그인 확인 중...";
-  }
+  $("#loginStatus").textContent = "로그인 확인 중...";
 
   await Drive.loadGapiClient();
   await waitForGoogleIdentity();
 
   Drive.initTokenClient(async (user, err) => {
     if (err || !user) {
-      if (!silentSignInTried) {
-        // 조용한 재로그인 시도가 실패한 것 — 버튼을 눌러 다시 로그인하도록 안내
-        $("#loginStatus").textContent = "";
-      } else {
-        $("#loginStatus").textContent = "로그인에 실패했어요. 다시 시도해주세요.";
-      }
-      silentSignInTried = true;
+      $("#loginStatus").textContent = "로그인에 실패했어요. 다시 시도해주세요.";
       return;
     }
-    localStorage.setItem(AUTO_SIGNIN_KEY, "1");
     onSignedIn(user);
   });
 
@@ -65,15 +54,19 @@ window.addEventListener("load", async () => {
   btn.textContent = "Google 계정으로 로그인";
   btn.onclick = () => {
     $("#loginStatus").textContent = "로그인 창을 여는 중...";
-    Drive.requestSignInConsent();
+    // 이미 이전에 동의한 사용자면 화면 깜빡임 없이 바로 토큰만 다시 받아와요.
+    // (한 번도 동의한 적 없는 새 사용자는 자동으로 동의 화면이 함께 떠요.)
+    Drive.requestSignIn();
   };
   $("#googleSignInBtn").innerHTML = "";
   $("#googleSignInBtn").appendChild(btn);
 
-  if (hasSignedInBefore) {
-    // 이전에 동의했던 사용자라면 팝업 없이 토큰만 조용히 재발급 시도
-    silentSignInTried = false;
-    Drive.requestSignIn();
+  // 캐시된 토큰이 아직 유효하면 팝업 없이 바로 로그인 상태로 복원
+  const restoredUser = await Drive.restoreSession();
+  if (restoredUser) {
+    onSignedIn(restoredUser);
+  } else {
+    $("#loginStatus").textContent = "";
   }
 });
 
@@ -121,7 +114,6 @@ $("#pickFolderBtn")?.addEventListener("click", async () => {
 $("#signOutBtn")?.addEventListener("click", () => {
   Drive.signOut();
   localStorage.removeItem("gw_folderId");
-  localStorage.removeItem(AUTO_SIGNIN_KEY);
   dataFolderId = null;
   location.reload();
 });
