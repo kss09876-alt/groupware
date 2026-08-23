@@ -1118,17 +1118,37 @@ async function generateAiImage() {
   btn.disabled = true;
   statusEl.textContent = "생성 중... (몇 초 정도 걸려요)";
   try {
-    const seed = Math.floor(Math.random() * 1e9);
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("이미지 생성 서버 응답 오류 (" + res.status + ")");
-    const blob = await res.blob();
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    let dataUrl = null;
+    // 1순위: Cloudflare Workers AI (품질이 더 좋아요, Worker에 AI 바인딩이 있을 때만 동작)
+    if (CONFIG.AI_WORKER_URL) {
+      try {
+        const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.image) {
+          dataUrl = `data:${data.mimeType || "image/png"};base64,${data.image}`;
+        }
+      } catch (e) {
+        // Worker 쪽 실패는 조용히 무시하고 아래 무료 대체 서비스로 넘어가요.
+      }
+    }
+    // 2순위(항상 되는 대체): Pollinations.ai — 키/가입 없이 완전 무료
+    if (!dataUrl) {
+      const seed = Math.floor(Math.random() * 1e9);
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("이미지 생성 서버 응답 오류 (" + res.status + ")");
+      const blob = await res.blob();
+      dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
     aiGalleryImages.push(dataUrl);
     if (!aiSelectedImageDataUrl) aiSelectedImageDataUrl = dataUrl;
     renderAiGallery();
