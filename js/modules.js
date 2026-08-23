@@ -59,7 +59,11 @@ const DEFAULTS = {
   calendar: { items: [] },
   approval: { items: [] },
   attendance: { checkins: [], leaves: [] },
-  sns: { items: [] },
+  sns: {
+    items: [],
+    goals: { dailyFollowerGoal: "50", dailyViewGoal: "500" },
+    dailyTrends: { date: "", items: [], businessContext: "" },
+  },
 };
 
 // 예전에 저장된 corp.json(구버전 스키마)을 불러와도 깨지지 않도록,
@@ -84,6 +88,18 @@ function normalizeCorp(c) {
   });
   out.sealedDocs = c.sealedDocs || [];
   return out;
+}
+
+// 예전에 저장된 sns.json(구버전 스키마)에도 목표/트렌드 캐시 필드를 채워줍니다.
+function normalizeSns(s) {
+  const d = DEFAULTS.sns;
+  return {
+    ...d,
+    ...s,
+    items: s.items || [],
+    goals: { ...d.goals, ...(s.goals || {}) },
+    dailyTrends: { ...d.dailyTrends, ...(s.dailyTrends || {}) },
+  };
 }
 
 function uid() {
@@ -581,6 +597,18 @@ const Modules = {
   // ---------------- SNS 운영 ----------------
   async sns(ctx) {
     const data = await ctx.load("sns");
+    const sub = ctx.snsSubTab || "content";
+    const nav = `<div class="subtab-nav">
+        <button class="subtab-btn ${sub === "content" ? "active" : ""}" data-sns-subtab="content">콘텐츠 운영</button>
+        <button class="subtab-btn ${sub === "trends" ? "active" : ""}" data-sns-subtab="trends">🔥 오늘의 추천</button>
+        <button class="subtab-btn ${sub === "analytics" ? "active" : ""}" data-sns-subtab="analytics">🎯 목표/실적</button>
+      </div>`;
+    const body =
+      sub === "trends" ? Modules.snsTrendsBody(data, ctx) : sub === "analytics" ? Modules.snsAnalyticsBody(data) : Modules.snsContentBody(data);
+    return nav + body;
+  },
+
+  snsContentBody(data) {
     const items = [...data.items].sort((a, b) => (a.scheduledAt || a.date).localeCompare(b.scheduledAt || b.date));
     const statusTag = (s) => `<span class="tag ${s === "게시완료" ? "tag-ok" : s === "반려" ? "tag-no" : s === "승인" ? "tag-ok" : "tag-wait"}">${s}</span>`;
     const upcoming = items
@@ -615,6 +643,123 @@ const Modules = {
           </div>
           <div class="notice-body" id="sbody_${s.id}" style="display:none;">${esc(s.content).replace(/\n/g, "<br>")}</div>
         `).join("") : `<div class="empty">등록된 SNS 콘텐츠가 없어요.</div>`}
+      </div>
+    `;
+  },
+
+  // ---------------- SNS: 오늘의 추천 (이슈 수집 + AI 콘텐츠 추천) ----------------
+  snsTrendsBody(data, ctx) {
+    const t = data.dailyTrends || { date: "", items: [] };
+    const isToday = t.date === todayStr();
+    const items = isToday ? t.items || [] : [];
+    return `
+      <div class="toolbar">
+        <button class="btn btn-primary" id="fetchTrendsBtn">${isToday && items.length ? "🔄 다시 수집하기" : "🔥 오늘의 이슈 수집하기"}</button>
+      </div>
+      <p class="hint">구글 뉴스(무료, 키 불필요)에서 오늘의 주요 이슈를 모아, 회사 업종에 맞춰 도달률이 높을 만한 10가지를 AI가 추천해줘요. 하루 한 번 수집해두면 그날은 그대로 재사용돼요(위 버튼으로 언제든 다시 수집 가능). 마음에 드는 걸 고르면 문구+이미지까지 자동으로 만들어드려요.</p>
+      <div id="trendsResult">
+        ${items.length ? Modules.trendsList(items) : `<div class="empty">${isToday ? "이슈를 수집했지만 추천 결과가 없어요." : "아직 오늘의 이슈를 수집하지 않았어요. 위 버튼을 눌러주세요."}</div>`}
+      </div>
+    `;
+  },
+
+  trendsList(items) {
+    return `
+      <div class="grid grid-2">
+        ${items
+          .map(
+            (t, i) => `
+          <div class="panel">
+            <div class="muted" style="margin-bottom:6px;">#${i + 1} · <span class="tag">${esc(t.platform)}</span></div>
+            <b>${esc(t.title)}</b>
+            <p style="font-size:13px; margin:8px 0;">💡 ${esc(t.angle)}</p>
+            <p class="muted" style="font-size:12px;">${esc(t.reason)}</p>
+            <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
+              <button class="btn btn-primary btn-tiny" data-use-trend="${i}">🤖 이걸로 자동 콘텐츠 만들기</button>
+              ${t.link ? `<a href="${esc(t.link)}" target="_blank" rel="noopener" class="btn btn-secondary btn-tiny">원문 보기</a>` : ""}
+            </div>
+          </div>
+        `
+          )
+          .join("")}
+      </div>
+    `;
+  },
+
+  // ---------------- SNS: 목표/실적 분석 ----------------
+  snsAnalyticsBody(data) {
+    const goals = data.goals || DEFAULTS.sns.goals;
+    const published = [...data.items].filter((s) => s.status === "게시완료").sort((a, b) => (b.publishedAt || "").localeCompare(a.publishedAt || ""));
+    const todayPublished = published.filter((s) => s.date === todayStr()).length;
+    const sum = (key) => published.reduce((acc, s) => acc + (Number(s[key]) || 0), 0);
+    const totalFollowers = sum("actualFollowers");
+    const totalViews = sum("actualViews");
+    const dailyFollowerGoal = Number(goals.dailyFollowerGoal) || 0;
+    const dailyViewGoal = Number(goals.dailyViewGoal) || 0;
+    const daysActive = Math.max(1, new Set(published.map((s) => s.date)).size);
+    const followerGoalTotal = dailyFollowerGoal * daysActive;
+    const viewGoalTotal = dailyViewGoal * daysActive;
+    const pct = (actual, goal) => (goal > 0 ? Math.min(100, Math.round((actual / goal) * 100)) : 0);
+    const bar = (label, actual, goal) => `
+      <div style="margin-bottom:14px;">
+        <div class="muted" style="font-size:12.5px; margin-bottom:4px; display:flex; justify-content:space-between;">
+          <span>${label}</span><span>${actual.toLocaleString()} / 목표 ${goal.toLocaleString()} (${pct(actual, goal)}%)</span>
+        </div>
+        <div style="background:#eef0f4; border-radius:20px; height:10px; overflow:hidden;">
+          <div style="width:${pct(actual, goal)}%; background:var(--primary); height:100%;"></div>
+        </div>
+      </div>`;
+    return `
+      <div class="toolbar"><button class="btn btn-secondary" id="editGoalsBtn">🎯 목표 수정</button></div>
+      <div class="grid grid-3" style="margin-bottom:16px;">
+        <div class="stat-card"><div class="stat-label">오늘 게시한 콘텐츠</div><div class="stat-value">${todayPublished} / 1건</div></div>
+        <div class="stat-card"><div class="stat-label">일일 목표 팔로워 증가</div><div class="stat-value">${dailyFollowerGoal.toLocaleString()}명</div></div>
+        <div class="stat-card"><div class="stat-label">일일 목표 조회수</div><div class="stat-value">${dailyViewGoal.toLocaleString()}회</div></div>
+      </div>
+      <div class="panel" style="margin-bottom:16px;">
+        <h3>누적 목표 대비 실적 (게시완료 콘텐츠 기준, ${daysActive}일치)</h3>
+        ${bar("팔로워 증가", totalFollowers, followerGoalTotal)}
+        ${bar("조회수", totalViews, viewGoalTotal)}
+        <p class="hint" style="margin-bottom:0;">※ 실제 팔로워/조회수는 각 플랫폼이 무료로 자동 연동을 지원하지 않아서, 콘텐츠별로 직접 입력해주셔야 해요. 아래 목록의 "실적 입력" 버튼을 이용해주세요.</p>
+      </div>
+      <div class="panel">
+        <h3>콘텐츠별 실적</h3>
+        ${published.length ? published.map((s) => `
+          <div class="list-row">
+            <div><span class="tag">${esc(s.date)}</span> <span class="tag">${esc(s.platform)}</span> <b>${esc(s.title)}</b>
+              <span class="muted">팔로워 +${(Number(s.actualFollowers) || 0).toLocaleString()} · 조회 ${(Number(s.actualViews) || 0).toLocaleString()}</span>
+            </div>
+            <button class="btn btn-tiny btn-secondary" data-input-result="${s.id}">실적 입력</button>
+          </div>
+        `).join("") : `<div class="empty">아직 게시완료된 콘텐츠가 없어요.</div>`}
+      </div>
+    `;
+  },
+
+  goalsForm(goals) {
+    return `
+      <h3>🎯 SNS 목표 설정</h3>
+      <div class="form-grid">
+        <label>일일 목표 팔로워 증가수 <input type="number" id="f_dailyFollowerGoal" value="${esc(goals.dailyFollowerGoal)}"></label>
+        <label>일일 목표 조회수 <input type="number" id="f_dailyViewGoal" value="${esc(goals.dailyViewGoal)}"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="saveGoalsBtn">저장</button>
+      </div>
+    `;
+  },
+
+  resultForm(item) {
+    return `
+      <h3>실적 입력 — ${esc(item.title)}</h3>
+      <div class="form-grid">
+        <label>실제 팔로워 증가수 <input type="number" id="f_actualFollowers" value="${item.actualFollowers || ""}"></label>
+        <label>실제 조회수 <input type="number" id="f_actualViews" value="${item.actualViews || ""}"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="saveResultBtn">저장</button>
       </div>
     `;
   },

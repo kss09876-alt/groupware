@@ -3,6 +3,7 @@
 let dataFolderId = localStorage.getItem("gw_folderId") || null;
 let currentTab = "dashboard";
 let corpSubTab = "info"; // 법인정보 탭 내부 하위탭: "info" | "seal"
+let snsSubTab = "content"; // SNS 탭 내부 하위탭: "content" | "trends" | "analytics"
 const cache = {}; // 모듈별 로드된 데이터 캐시 (탭 전환 시 재사용, 저장 후 무효화)
 
 // AI 콘텐츠 생성 모달의 임시 상태 (모달 열려있는 동안만 메모리에 보관)
@@ -154,6 +155,7 @@ async function loadModule(name, force) {
   try {
     let data = await Drive.readCollection(dataFolderId, FILES[name], DEFAULTS[name]);
     if (name === "corp") data = normalizeCorp(data);
+    if (name === "sns") data = normalizeSns(data);
     cache[name] = data;
     setSyncStatus("동기화됨", false);
     return data;
@@ -177,6 +179,9 @@ const ctx = {
   },
   get corpSubTab() {
     return corpSubTab;
+  },
+  get snsSubTab() {
+    return snsSubTab;
   },
   load: loadModule,
 };
@@ -202,6 +207,7 @@ $$(".nav-item").forEach((btn) => {
 async function goTab(tab) {
   currentTab = tab;
   if (tab === "corp") corpSubTab = "info";
+  if (tab === "sns") snsSubTab = "content";
   $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("#pageTitle").textContent = TAB_TITLES[tab];
   $("#content").innerHTML = `<div class="loading">불러오는 중...</div>`;
@@ -954,6 +960,58 @@ function bindTabEvents(tab) {
         refreshCurrentTab();
       })
     );
+
+    $$("[data-sns-subtab]").forEach((b) =>
+      b.addEventListener("click", () => {
+        snsSubTab = b.dataset.snsSubtab;
+        refreshCurrentTab();
+      })
+    );
+
+    // ---- 오늘의 추천 ----
+    $("#fetchTrendsBtn")?.addEventListener("click", fetchDailyTrends);
+    $$("[data-use-trend]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const data = await loadModule("sns");
+        const t = (data.dailyTrends.items || [])[Number(b.dataset.useTrend)];
+        if (t) useTrendAsContent(t);
+      })
+    );
+
+    // ---- 목표/실적 ----
+    $("#editGoalsBtn")?.addEventListener("click", async () => {
+      const data = await loadModule("sns");
+      openModal(Modules.goalsForm(data.goals));
+      $("#saveGoalsBtn").addEventListener("click", async () => {
+        const d2 = await loadModule("sns");
+        d2.goals = {
+          dailyFollowerGoal: $("#f_dailyFollowerGoal").value || "0",
+          dailyViewGoal: $("#f_dailyViewGoal").value || "0",
+        };
+        await saveModule("sns", d2);
+        closeModal();
+        refreshCurrentTab();
+      });
+    });
+    $$("[data-input-result]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const data = await loadModule("sns");
+        const item = data.items.find((s) => s.id === b.dataset.inputResult);
+        if (!item) return;
+        openModal(Modules.resultForm(item));
+        $("#saveResultBtn").addEventListener("click", async () => {
+          const d2 = await loadModule("sns");
+          const it2 = d2.items.find((s) => s.id === item.id);
+          if (!it2) return;
+          it2.actualFollowers = Number($("#f_actualFollowers").value) || 0;
+          it2.actualViews = Number($("#f_actualViews").value) || 0;
+          it2.resultUpdatedAt = nowStr();
+          await saveModule("sns", d2);
+          closeModal();
+          refreshCurrentTab();
+        });
+      })
+    );
   }
 }
 
@@ -1042,6 +1100,58 @@ async function runSnsAutoPublish() {
   }
 }
 setInterval(runSnsAutoPublish, 5 * 60 * 1000);
+
+// ---------------- 오늘의 추천 (이슈 수집 + AI 도달률 추천) ----------------
+// 구글 뉴스 RSS(무료, 키 불필요)에서 오늘의 헤드라인을 모아 Worker에 보내면,
+// Gemini가 회사 업종에 맞춰 도달률 높을 만한 10개를 골라줘요. 하루 1번 수집해두면
+// 그날은 계속 재사용되고(sns.dailyTrends에 날짜와 함께 캐시), 다시 수집하기로 새로고침 가능해요.
+async function fetchDailyTrends() {
+  const btn = $("#fetchTrendsBtn");
+  const resultEl = $("#trendsResult");
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "수집 중... (몇십 초 걸릴 수 있어요)";
+  if (resultEl) resultEl.innerHTML = `<div class="loading">오늘의 이슈를 모으고 있어요...</div>`;
+  try {
+    const corp = await loadModule("corp");
+    const businessContext = corp.registeredPurposes && corp.registeredPurposes.length ? corp.registeredPurposes.join(", ") : corp.name || "";
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/daily-trends", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ businessContext }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.error) {
+      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    }
+    const sns = await loadModule("sns");
+    sns.dailyTrends = { date: todayStr(), items: data.items || [], businessContext };
+    await saveModule("sns", sns);
+    refreshCurrentTab();
+  } catch (e) {
+    if (resultEl) resultEl.innerHTML = `<div class="empty">이슈 수집에 실패했어요: ${esc(e.message)}</div>`;
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+// 추천 카드에서 "이걸로 자동 콘텐츠 만들기"를 누르면, AI 콘텐츠 모달을 열고
+// 주제/플랫폼을 채운 뒤 문구 생성 → 이미지 생성까지 이어서 자동으로 실행해요.
+async function useTrendAsContent(trend) {
+  openModal(Modules.aiContentForm());
+  wireAiContentModal();
+  $("#ai_topic").value = trend.angle ? `${trend.title} — ${trend.angle}` : trend.title;
+  $("#ai_imgPrompt").value = trend.angle || trend.title;
+  $$("#ai_platform option").forEach((o) => {
+    if (o.textContent === trend.platform) $("#ai_platform").value = trend.platform;
+  });
+  await generateAiCaption();
+  await generateAiImage();
+}
 
 // ---------------- AI로 SNS 콘텐츠 만들기 (문구 + 이미지 + 간단 동영상) ----------------
 // 문구: Cloudflare Worker → Gemini 무료 티어 (/generate-text)
