@@ -588,8 +588,8 @@ const Modules = {
       .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
       .slice(0, 5);
     return `
-      <div class="toolbar"><button class="btn btn-primary" id="newSnsBtn">+ 콘텐츠 등록</button></div>
-      <p class="hint">✅ 예약 자동화: "자동 게시 처리"를 켜고 승인하면, 예정 시각이 되었을 때 앱이 열려있는 시점에 자동으로 "게시완료"로 바뀌고 캘린더에도 자동 등록돼요. (브라우저가 실제로 열려있어야 동작해요 — 완전한 백그라운드 자동 게시는 별도 서버 연동이 필요해요.)<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 → 예약 자동화 워크플로우까지 지원해요.</p>
+      <div class="toolbar"><button class="btn btn-secondary" id="aiContentBtn">🤖 AI로 콘텐츠 만들기</button><button class="btn btn-primary" id="newSnsBtn">+ 콘텐츠 등록</button></div>
+      <p class="hint">✅ 예약 자동화: "자동 게시 처리"를 켜고 승인하면, 예정 시각이 되었을 때 앱이 열려있는 시점에 자동으로 "게시완료"로 바뀌고 캘린더에도 자동 등록돼요. (브라우저가 실제로 열려있어야 동작해요 — 완전한 백그라운드 자동 게시는 별도 서버 연동이 필요해요.)<br>🤖 AI로 콘텐츠 만들기: 주제만 입력하면 문구(무료 Gemini)와 이미지(무료 Pollinations)를 만들어주고, 이미지 2장 이상이면 간단한 슬라이드쇼 동영상도 만들 수 있어요.<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 → 예약 자동화 워크플로우까지 지원해요.</p>
       ${upcoming.length ? `
       <div class="panel" style="margin-bottom:16px;">
         <h3>🤖 자동 게시 예정</h3>
@@ -604,6 +604,8 @@ const Modules = {
               ${s.autoPublish ? `<span class="tag tag-ok">🤖 자동게시</span>` : ""}
               <b>${esc(s.title)}</b>
               <span class="muted">담당 ${esc(s.assignee)} · 게시예정 ${esc(s.date)}${s.time ? " " + esc(s.time) : ""}</span>
+              ${s.imageLink ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">🖼 이미지</a>` : ""}
+              ${s.videoLink ? `<a href="${esc(s.videoLink)}" target="_blank" rel="noopener" class="tag">🎬 동영상</a>` : ""}
             </div>
             <span>
               ${s.status === "검토중" ? `<button class="btn btn-tiny btn-primary" data-sns-approve="${s.id}">승인</button><button class="btn btn-tiny btn-danger" data-sns-reject="${s.id}">반려</button>` : ""}
@@ -635,6 +637,51 @@ const Modules = {
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
         <button class="btn btn-primary" id="saveSnsBtn">등록 (검토요청)</button>
+      </div>
+    `;
+  },
+
+  aiContentForm() {
+    return `
+      <h3>🤖 AI로 SNS 콘텐츠 만들기</h3>
+      <div class="form-grid">
+        <label>플랫폼
+          <select id="ai_platform"><option>인스타그램</option><option>페이스북</option><option>블로그</option><option>유튜브</option><option>기타</option></select>
+        </label>
+        <label>주제/키워드 <input id="ai_topic" placeholder="예: 신제품 출시 이벤트"></label>
+        <label>톤앤매너
+          <select id="ai_tone"><option>친근하게</option><option>전문적으로</option><option>유머러스하게</option><option>감성적으로</option></select>
+        </label>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
+        <button class="btn btn-secondary btn-tiny" id="genTextBtn">✍️ 문구 생성</button>
+      </div>
+      <div id="aiTextResult" style="display:none; margin-top:10px;">
+        <label style="display:flex; flex-direction:column; gap:5px; font-size:12.5px; color:var(--muted); font-weight:600;">
+          생성된 문구 (자유롭게 수정하세요)
+          <textarea id="ai_caption" rows="4"></textarea>
+        </label>
+        <div id="ai_hashtags" class="hint" style="margin-top:6px;"></div>
+      </div>
+
+      <div class="form-grid" style="margin-top:16px;">
+        <label>이미지 프롬프트 (비워두면 위 주제를 사용해요) <input id="ai_imgPrompt" placeholder="예: 밝은 카페에서 신제품을 든 손, 사진 느낌"></label>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start;">
+        <button class="btn btn-secondary btn-tiny" id="genImageBtn">🎨 이미지 생성</button>
+        <span id="genImageStatus" class="muted"></span>
+      </div>
+      <div id="aiImageGallery" class="ai-image-gallery"></div>
+
+      <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
+        <button class="btn btn-secondary btn-tiny" id="genVideoBtn" disabled>🎬 슬라이드쇼 동영상 만들기 (이미지 2장 이상 필요)</button>
+        <span id="genVideoStatus" class="muted"></span>
+      </div>
+      <div id="aiVideoPreview"></div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>닫기</button>
+        <button class="btn btn-primary" id="useAiContentBtn">이 내용으로 콘텐츠 등록하기</button>
       </div>
     `;
   },

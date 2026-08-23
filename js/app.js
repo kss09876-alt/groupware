@@ -5,6 +5,14 @@ let currentTab = "dashboard";
 let corpSubTab = "info"; // 법인정보 탭 내부 하위탭: "info" | "seal"
 const cache = {}; // 모듈별 로드된 데이터 캐시 (탭 전환 시 재사용, 저장 후 무효화)
 
+// AI 콘텐츠 생성 모달의 임시 상태 (모달 열려있는 동안만 메모리에 보관)
+let aiGalleryImages = []; // 생성된 이미지 dataURL 목록
+let aiSelectedImageDataUrl = null; // 대표로 고른 이미지
+let aiVideoBlob = null; // 생성된 슬라이드쇼 동영상
+// "콘텐츠 등록" 폼으로 넘어갈 때까지 잠깐 들고 있는 첨부 미디어 (저장 시 드라이브에 업로드됨)
+let pendingAiImageDataUrl = null;
+let pendingAiVideoBlob = null;
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
@@ -895,7 +903,7 @@ function bindTabEvents(tab) {
         const data = await loadModule("sns");
         const date = $("#f_date").value || todayStr();
         const time = $("#f_time").value || "09:00";
-        data.items.push({
+        const newItem = {
           id: uid(),
           platform: $("#f_platform").value,
           title: $("#f_title").value || "(제목없음)",
@@ -908,11 +916,22 @@ function bindTabEvents(tab) {
           calendarEventId: null,
           approver: $("#f_approver").value.trim(),
           status: "검토중",
-        });
+        };
+        data.items.push(newItem);
         await saveModule("sns", data);
         closeModal();
         refreshCurrentTab();
+        if (pendingAiImageDataUrl || pendingAiVideoBlob) {
+          const img = pendingAiImageDataUrl, vid = pendingAiVideoBlob;
+          pendingAiImageDataUrl = null;
+          pendingAiVideoBlob = null;
+          attachAiMediaToSnsItem(newItem.id, img, vid);
+        }
       });
+    });
+    $("#aiContentBtn")?.addEventListener("click", () => {
+      openModal(Modules.aiContentForm());
+      wireAiContentModal();
     });
     $$("[data-sns]").forEach((row) =>
       row.addEventListener("click", (e) => {
@@ -1023,3 +1042,244 @@ async function runSnsAutoPublish() {
   }
 }
 setInterval(runSnsAutoPublish, 5 * 60 * 1000);
+
+// ---------------- AI로 SNS 콘텐츠 만들기 (문구 + 이미지 + 간단 동영상) ----------------
+// 문구: Cloudflare Worker → Gemini 무료 티어 (/generate-text)
+// 이미지: Pollinations.ai (완전 무료, 키/가입 불필요, 브라우저에서 바로 호출)
+// 동영상: 생성된 이미지들을 캔버스에 그려서 MediaRecorder로 녹화하는 "슬라이드쇼" 방식
+//         (진짜 AI 영상생성 API 중엔 상시 무료로 쓸 만한 게 마땅치 않아서, 100% 무료로
+//         바로 되는 대안으로 구현했어요. 나중에 원하시면 실제 AI 영상 API로 교체 가능해요.)
+function wireAiContentModal() {
+  aiGalleryImages = [];
+  aiSelectedImageDataUrl = null;
+  aiVideoBlob = null;
+  $("#genTextBtn").addEventListener("click", generateAiCaption);
+  $("#genImageBtn").addEventListener("click", generateAiImage);
+  $("#genVideoBtn").addEventListener("click", generateAiVideo);
+  $("#useAiContentBtn").addEventListener("click", () => {
+    const topic = $("#ai_topic").value.trim();
+    const caption = $("#ai_caption")?.value?.trim() || "";
+    const hashtags = $("#ai_hashtags")?.textContent?.trim() || "";
+    const platform = $("#ai_platform").value;
+    pendingAiImageDataUrl = aiSelectedImageDataUrl;
+    pendingAiVideoBlob = aiVideoBlob;
+    closeModal();
+    $("#newSnsBtn").click();
+    $("#f_title").value = topic || "(제목없음)";
+    $("#f_content").value = caption ? caption + (hashtags ? "\n\n" + hashtags : "") : "";
+    $$("#f_platform option").forEach((o) => {
+      if (o.textContent === platform) $("#f_platform").value = platform;
+    });
+  });
+}
+
+async function generateAiCaption() {
+  const btn = $("#genTextBtn");
+  const topic = $("#ai_topic").value.trim();
+  if (!topic) {
+    alert("주제/키워드를 먼저 입력해주세요.");
+    return;
+  }
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "생성 중...";
+  try {
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: $("#ai_platform").value, topic, tone: $("#ai_tone").value }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.error) {
+      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    }
+    $("#aiTextResult").style.display = "block";
+    $("#ai_caption").value = data.caption || "";
+    $("#ai_hashtags").textContent = (data.hashtags || []).map((h) => (h.startsWith("#") ? h : "#" + h)).join(" ");
+  } catch (e) {
+    alert("문구 생성에 실패했어요: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✍️ 문구 생성";
+  }
+}
+
+async function generateAiImage() {
+  const btn = $("#genImageBtn");
+  const statusEl = $("#genImageStatus");
+  const prompt = ($("#ai_imgPrompt").value || $("#ai_topic").value || "").trim();
+  if (!prompt) {
+    alert("이미지 프롬프트나 주제를 입력해주세요.");
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = "생성 중... (몇 초 정도 걸려요)";
+  try {
+    const seed = Math.floor(Math.random() * 1e9);
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("이미지 생성 서버 응답 오류 (" + res.status + ")");
+    const blob = await res.blob();
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    aiGalleryImages.push(dataUrl);
+    if (!aiSelectedImageDataUrl) aiSelectedImageDataUrl = dataUrl;
+    renderAiGallery();
+    statusEl.textContent = "";
+  } catch (e) {
+    statusEl.textContent = "";
+    alert("이미지 생성에 실패했어요: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderAiGallery() {
+  const el = $("#aiImageGallery");
+  if (!el) return;
+  el.innerHTML = aiGalleryImages
+    .map(
+      (u, i) => `
+    <div class="ai-thumb ${u === aiSelectedImageDataUrl ? "selected" : ""}" data-ai-thumb="${i}">
+      <img src="${u}" alt="생성된 이미지">
+      ${u === aiSelectedImageDataUrl ? '<span class="ai-thumb-badge">대표</span>' : ""}
+    </div>`
+    )
+    .join("");
+  $$("[data-ai-thumb]", el).forEach((t) =>
+    t.addEventListener("click", () => {
+      aiSelectedImageDataUrl = aiGalleryImages[Number(t.dataset.aiThumb)];
+      renderAiGallery();
+    })
+  );
+  const videoBtn = $("#genVideoBtn");
+  if (videoBtn) videoBtn.disabled = aiGalleryImages.length < 2;
+}
+
+async function generateAiVideo() {
+  const btn = $("#genVideoBtn");
+  const statusEl = $("#genVideoStatus");
+  if (aiGalleryImages.length < 2) return;
+  btn.disabled = true;
+  statusEl.textContent = "동영상 만드는 중... (이미지당 약 2초씩 걸려요)";
+  try {
+    const caption = ($("#ai_caption")?.value || $("#ai_topic").value || "").trim();
+    aiVideoBlob = await buildSlideshowVideo(aiGalleryImages.slice(0, 5), caption);
+    const url = URL.createObjectURL(aiVideoBlob);
+    $("#aiVideoPreview").innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
+    statusEl.textContent = "완성했어요! 아래에서 미리 확인해보세요.";
+  } catch (e) {
+    statusEl.textContent = "";
+    alert("동영상 생성에 실패했어요: " + e.message + " (일부 브라우저에서는 지원하지 않을 수 있어요)");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function loadImageEl(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(" ");
+  let line = "";
+  const lines = [];
+  for (const w of words) {
+    const test = line ? line + " " + w : w;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = w;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  const shown = lines.slice(0, 2);
+  const startY = y - (shown.length - 1) * lineHeight;
+  shown.forEach((l, i) => ctx.fillText(l, x, startY + i * lineHeight));
+}
+
+// 이미지들을 캔버스에 순서대로 그려서 녹화한 간단한 슬라이드쇼 동영상(webm)을 만들어요.
+async function buildSlideshowVideo(dataUrls, captionText) {
+  const W = 720,
+    H = 720;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const stream = canvas.captureStream(15);
+  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9") ? "video/webm;codecs=vp9" : "video/webm";
+  const recorder = new MediaRecorder(stream, { mimeType });
+  const chunks = [];
+  recorder.ondataavailable = (e) => {
+    if (e.data.size) chunks.push(e.data);
+  };
+  const done = new Promise((resolve) => {
+    recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+  });
+  recorder.start();
+
+  const imgs = await Promise.all(dataUrls.map(loadImageEl));
+  const perImageMs = 2200;
+  for (const img of imgs) {
+    const start = Date.now();
+    while (Date.now() - start < perImageMs) {
+      ctx.fillStyle = "#111";
+      ctx.fillRect(0, 0, W, H);
+      const scale = Math.max(W / img.width, H / img.height);
+      const dw = img.width * scale,
+        dh = img.height * scale;
+      ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      if (captionText) {
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0, H - 90, W, 90);
+        ctx.fillStyle = "#fff";
+        ctx.font = "26px sans-serif";
+        ctx.textAlign = "center";
+        wrapCanvasText(ctx, captionText, W / 2, H - 55, W - 40, 30);
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  recorder.stop();
+  return done;
+}
+
+// 생성된 이미지/동영상을 드라이브에 실제 파일로 올리고, 그 링크를 해당 SNS 콘텐츠에 붙여줘요.
+// (JSON 파일이 너무 커지지 않도록 이미지 자체는 sns.json에 넣지 않고, 드라이브 파일 링크만 저장해요.)
+async function attachAiMediaToSnsItem(id, imageDataUrl, videoBlob) {
+  try {
+    const data = await loadModule("sns", true);
+    const item = data.items.find((s) => s.id === id);
+    if (!item) return;
+    if (imageDataUrl) {
+      const blob = await (await fetch(imageDataUrl)).blob();
+      const file = new File([blob], `ai_image_${Date.now()}.png`, { type: blob.type || "image/png" });
+      const uploaded = await Drive.uploadDocument(dataFolderId, file);
+      item.imageFileId = uploaded.id;
+      item.imageLink = uploaded.webViewLink || "";
+    }
+    if (videoBlob) {
+      const file = new File([videoBlob], `ai_video_${Date.now()}.webm`, { type: "video/webm" });
+      const uploaded = await Drive.uploadDocument(dataFolderId, file);
+      item.videoFileId = uploaded.id;
+      item.videoLink = uploaded.webViewLink || "";
+    }
+    await saveModule("sns", data);
+    if (currentTab === "sns") refreshCurrentTab();
+  } catch (e) {
+    console.error("AI 콘텐츠 미디어 첨부 실패", e);
+  }
+}
