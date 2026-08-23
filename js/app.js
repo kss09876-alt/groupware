@@ -21,18 +21,37 @@ function setSyncStatus(text, busy) {
 }
 
 // ---------------- 부트스트랩 ----------------
+// "로그인 유지": 이전에 로그인한 적이 있으면, 페이지를 열 때마다 로그인 버튼을 누르게 하는 대신
+// 화면 뒤에서 조용히(팝업 없이) 토큰을 다시 받아와요. 브라우저 세션이 살아있으면 대부분 그냥
+// 로그인된 상태로 이어지고, 세션이 끊겼을 때만 "Google 계정으로 로그인" 버튼이 보여요.
+const AUTO_SIGNIN_KEY = "gw_hasSignedIn";
+let silentSignInTried = false;
+
 window.addEventListener("load", async () => {
   if (!CONFIG.CLIENT_ID.includes(".apps.googleusercontent.com") || CONFIG.CLIENT_ID.startsWith("YOUR_")) {
     $("#setupWarning").style.display = "block";
   }
+
+  const hasSignedInBefore = !!localStorage.getItem(AUTO_SIGNIN_KEY);
+  if (hasSignedInBefore) {
+    $("#loginStatus").textContent = "로그인 확인 중...";
+  }
+
   await Drive.loadGapiClient();
   await waitForGoogleIdentity();
 
   Drive.initTokenClient(async (user, err) => {
     if (err || !user) {
-      $("#loginStatus").textContent = "로그인에 실패했어요. 다시 시도해주세요.";
+      if (!silentSignInTried) {
+        // 조용한 재로그인 시도가 실패한 것 — 버튼을 눌러 다시 로그인하도록 안내
+        $("#loginStatus").textContent = "";
+      } else {
+        $("#loginStatus").textContent = "로그인에 실패했어요. 다시 시도해주세요.";
+      }
+      silentSignInTried = true;
       return;
     }
+    localStorage.setItem(AUTO_SIGNIN_KEY, "1");
     onSignedIn(user);
   });
 
@@ -50,6 +69,12 @@ window.addEventListener("load", async () => {
   };
   $("#googleSignInBtn").innerHTML = "";
   $("#googleSignInBtn").appendChild(btn);
+
+  if (hasSignedInBefore) {
+    // 이전에 동의했던 사용자라면 팝업 없이 토큰만 조용히 재발급 시도
+    silentSignInTried = false;
+    Drive.requestSignIn();
+  }
 });
 
 function waitForGoogleIdentity() {
@@ -96,6 +121,7 @@ $("#pickFolderBtn")?.addEventListener("click", async () => {
 $("#signOutBtn")?.addEventListener("click", () => {
   Drive.signOut();
   localStorage.removeItem("gw_folderId");
+  localStorage.removeItem(AUTO_SIGNIN_KEY);
   dataFolderId = null;
   location.reload();
 });
@@ -234,58 +260,154 @@ function fileToDataUrl(file) {
   });
 }
 
-// ---------------- 인감관리: 서류에 도장 이미지 찍기 (pdf-lib 사용) ----------------
+// ---------------- 인감관리: 서류에 도장 이미지 찍기 (pdf-lib + pdf.js 사용) ----------------
 // 실제 등기소/공증 효력이 있는 전자서명이 아니라, 사내 서류에 도장 이미지를
 // 시각적으로 얹어주는 기능입니다. jpg/png는 먼저 1페이지짜리 PDF로 감싼 뒤 처리합니다.
-async function stampAndSaveDocument(file, sealType, pos, pageMode) {
+// pdf-lib(PDF 생성/편집)와 pdf.js(미리보기 렌더링)는 꽤 무거운 라이브러리라, 처음부터
+// 불러오지 않고 인감관리에서 실제로 서류를 올릴 때만 불러와서(lazy load) 초기 로딩 속도를 지킵니다.
+const PDF_LIB_SRC = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
+const PDFJS_SRC = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
+const PDFJS_WORKER_SRC = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+const scriptLoadCache = {};
+function loadScriptOnce(src) {
+  if (scriptLoadCache[src]) return scriptLoadCache[src];
+  scriptLoadCache[src] = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("스크립트를 불러오지 못했어요: " + src));
+    document.head.appendChild(s);
+  });
+  return scriptLoadCache[src];
+}
+async function ensurePdfLibs() {
+  await Promise.all([loadScriptOnce(PDF_LIB_SRC), loadScriptOnce(PDFJS_SRC)]);
+  if (window.pdfjsLib && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_SRC;
+  }
+}
+
+async function toPdfBytes(file) {
+  const { PDFDocument } = PDFLib;
+  const arrayBuf = await file.arrayBuffer();
+  if (file.type.startsWith("image/")) {
+    const doc = await PDFDocument.create();
+    const img = file.type.includes("png") ? await doc.embedPng(arrayBuf) : await doc.embedJpg(arrayBuf);
+    const page = doc.addPage([img.width, img.height]);
+    page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+    return await doc.save();
+  }
+  return new Uint8Array(arrayBuf);
+}
+
+// 서류 미리보기를 캔버스에 그리고, 사용자가 클릭한 위치를 기억해뒀다가
+// "날인하기"를 누르면 그 좌표에 정확히 도장을 찍습니다.
+let sealPlaceState = null;
+async function setupSealPlacer(pdfBytes, fileName, seals) {
+  const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+  const pageCount = pdf.numPages;
+
+  const pageSelect = $("#f_sealPageNum");
+  pageSelect.innerHTML = Array.from(
+    { length: pageCount },
+    (_, i) => `<option value="${i + 1}">${i + 1} 페이지${i === pageCount - 1 ? " (마지막)" : ""}</option>`
+  ).join("");
+  pageSelect.value = String(pageCount);
+
+  sealPlaceState = { pdfBytes, fileName, pageIndex: pageCount - 1, x: null, y: null, viewport: null, sealType: null, sealDataUrl: null };
+
+  const updateMarkerSrc = () => {
+    const sealType = $("#f_sealType").value;
+    const seal = seals[sealType];
+    sealPlaceState.sealType = sealType;
+    sealPlaceState.sealDataUrl = seal && seal.imageDataUrl;
+    if (sealPlaceState.sealDataUrl) $("#sealPlaceMarker").src = sealPlaceState.sealDataUrl;
+  };
+  updateMarkerSrc();
+  $("#f_sealType").addEventListener("change", updateMarkerSrc);
+
+  async function renderPage(pageNum) {
+    const page = await pdf.getPage(pageNum);
+    const wrap = $("#sealPlaceCanvasWrap");
+    const containerWidth = wrap.clientWidth || 420;
+    const baseViewport = page.getViewport({ scale: 1 });
+    const scale = Math.min(containerWidth / baseViewport.width, 1.4);
+    const viewport = page.getViewport({ scale });
+    const canvas = $("#sealPlaceCanvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+
+    sealPlaceState.pageIndex = pageNum - 1;
+    sealPlaceState.viewport = viewport;
+    sealPlaceState.x = null;
+    sealPlaceState.y = null;
+    $("#sealPlaceMarker").style.display = "none";
+    $("#confirmSealBtn").disabled = true;
+  }
+  await renderPage(pageCount);
+  pageSelect.addEventListener("change", () => renderPage(Number(pageSelect.value)));
+
+  $("#sealPlaceCanvas").addEventListener("click", (ev) => {
+    const canvas = $("#sealPlaceCanvas");
+    const wrap = $("#sealPlaceCanvasWrap");
+    const canvasRect = canvas.getBoundingClientRect();
+    const wrapRect = wrap.getBoundingClientRect();
+
+    // 실제 PDF 좌표 계산용 (캔버스 버퍼 픽셀 기준)
+    const bufX = ((ev.clientX - canvasRect.left) / canvasRect.width) * canvas.width;
+    const bufY = ((ev.clientY - canvasRect.top) / canvasRect.height) * canvas.height;
+    sealPlaceState.x = bufX;
+    sealPlaceState.y = bufY;
+
+    // 화면 미리보기 마커 위치 (CSS 픽셀 기준)
+    const marker = $("#sealPlaceMarker");
+    const markerSize = 64;
+    marker.style.width = markerSize + "px";
+    marker.style.left = ev.clientX - wrapRect.left - markerSize / 2 + "px";
+    marker.style.top = ev.clientY - wrapRect.top - markerSize / 2 + "px";
+    marker.style.display = sealPlaceState.sealDataUrl ? "block" : "none";
+    $("#confirmSealBtn").disabled = !sealPlaceState.sealDataUrl;
+  });
+}
+
+async function stampAndSaveDocumentAt(state) {
+  if (!state || state.x == null || state.y == null) {
+    alert("도장을 찍을 위치를 미리보기에서 클릭해주세요.");
+    return;
+  }
   setSyncStatus("도장 찍는 중...", true);
   try {
-    if (typeof PDFLib === "undefined") {
-      throw new Error("PDF 처리 라이브러리를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침 해주세요.");
-    }
     const { PDFDocument } = PDFLib;
     const c = await loadModule("corp");
-    const seal = c.seals && c.seals[sealType];
+    const seal = c.seals && c.seals[state.sealType];
     if (!seal || !seal.imageDataUrl) throw new Error("등록된 도장이 없어요.");
 
-    const arrayBuf = await file.arrayBuffer();
-    const isImage = file.type.startsWith("image/");
-    let pdfBytes;
-    if (isImage) {
-      const doc = await PDFDocument.create();
-      const img = file.type.includes("png") ? await doc.embedPng(arrayBuf) : await doc.embedJpg(arrayBuf);
-      const page = doc.addPage([img.width, img.height]);
-      page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
-      pdfBytes = await doc.save();
-    } else {
-      pdfBytes = arrayBuf;
-    }
-
-    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const pdfDoc = await PDFDocument.load(state.pdfBytes);
     const sealBytes = await (await fetch(seal.imageDataUrl)).arrayBuffer();
     const sealImg = seal.imageDataUrl.startsWith("data:image/png")
       ? await pdfDoc.embedPng(sealBytes)
       : await pdfDoc.embedJpg(sealBytes);
 
-    const pages = pdfDoc.getPages();
-    const targetPages = pageMode === "all" ? pages : pageMode === "first" ? [pages[0]] : [pages[pages.length - 1]];
+    const page = pdfDoc.getPages()[state.pageIndex];
+    const scale = state.viewport.scale;
+    const pageHeightPts = state.viewport.height / scale;
+    const pdfX = state.x / scale;
+    const pdfY = pageHeightPts - state.y / scale;
 
     const sealHeight = 90;
     const sealWidth = sealHeight * (sealImg.width / sealImg.height);
-    const margin = 36;
-    targetPages.forEach((page) => {
-      const { width, height } = page.getSize();
-      let x, y;
-      if (pos === "br") { x = width - margin - sealWidth; y = margin; }
-      else if (pos === "bl") { x = margin; y = margin; }
-      else if (pos === "tr") { x = width - margin - sealWidth; y = height - margin - sealHeight; }
-      else { x = margin; y = height - margin - sealHeight; }
-      page.drawImage(sealImg, { x, y, width: sealWidth, height: sealHeight, opacity: 0.92 });
+    page.drawImage(sealImg, {
+      x: pdfX - sealWidth / 2,
+      y: pdfY - sealHeight / 2,
+      width: sealWidth,
+      height: sealHeight,
+      opacity: 0.92,
     });
 
     const stampedBytes = await pdfDoc.save();
     const stampedBlob = new Blob([stampedBytes], { type: "application/pdf" });
-    const baseName = file.name.replace(/\.[^.]+$/, "");
+    const baseName = state.fileName.replace(/\.[^.]+$/, "");
     const stampedFile = new File([stampedBlob], `${baseName}_날인.pdf`, { type: "application/pdf" });
 
     const uploaded = await Drive.uploadDocument(dataFolderId, stampedFile, null);
@@ -295,7 +417,7 @@ async function stampAndSaveDocument(file, sealType, pos, pageMode) {
     c2.sealedDocs.unshift({
       id: uid(),
       name: stampedFile.name,
-      sealLabel: seal.label || (sealType === "corporate" ? "법인인감" : "사용인감"),
+      sealLabel: seal.label || (state.sealType === "corporate" ? "법인인감" : "사용인감"),
       fileId: uploaded.id,
       webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
       createdAt: new Date().toISOString(),
@@ -334,7 +456,6 @@ function bindTabEvents(tab) {
           regNo: $("#f_regNo").value,
           bizNo: $("#f_bizNo").value,
           foundedDate: $("#f_foundedDate").value,
-          fiscalYear: $("#f_fiscalYear").value,
           capital: $("#f_capital").value,
           capitalShares: $("#f_capitalShares").value,
           parValue: $("#f_parValue").value,
@@ -524,15 +645,24 @@ function bindTabEvents(tab) {
         e.target.value = "";
         return;
       }
-      openModal(Modules.sealPlaceForm(file.name, c.seals));
-      $("#confirmSealBtn").addEventListener("click", async () => {
-        const sealType = $("#f_sealType").value;
-        const pos = $("#f_sealPos").value;
-        const pageMode = $("#f_sealPage").value;
-        closeModal();
-        await stampAndSaveDocument(file, sealType, pos, pageMode);
-        e.target.value = "";
-      });
+      setSyncStatus("서류 불러오는 중...", true);
+      try {
+        await ensurePdfLibs();
+        const pdfBytes = await toPdfBytes(file);
+        setSyncStatus("동기화됨", false);
+        openModal(Modules.sealPlaceForm(file.name, c.seals));
+        await setupSealPlacer(pdfBytes, file.name, c.seals);
+        $("#confirmSealBtn").addEventListener("click", async () => {
+          const state = sealPlaceState;
+          closeModal();
+          await stampAndSaveDocumentAt(state);
+        });
+      } catch (err) {
+        console.error(err);
+        setSyncStatus("불러오기 실패", false);
+        alert("서류를 불러오지 못했어요: " + (err && err.message ? err.message : "알 수 없는 오류"));
+      }
+      e.target.value = "";
     });
 
     $$("[data-download-sealed-doc]").forEach((b) =>

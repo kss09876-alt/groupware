@@ -202,10 +202,7 @@ const Modules = {
           <div class="corp-id">${esc(c.regNo) || "-"}</div>
           <div class="stat-label" style="margin-top:14px">사업자등록번호</div>
           <div class="corp-id">${esc(c.bizNo) || "-"}</div>
-          <table class="kv" style="margin-top:14px"><tbody>
-            <tr><th>법인설립일</th><td>${esc(c.foundedDate) || "-"}</td></tr>
-            <tr><th>사업연도</th><td>${esc(c.fiscalYear) || "-"}</td></tr>
-          </tbody></table>
+          ${c.foundedDate ? `<table class="kv" style="margin-top:14px"><tbody><tr><th>법인설립일</th><td>${esc(c.foundedDate)}</td></tr></tbody></table>` : ""}
         </div>
 
         <div class="panel capital-panel">
@@ -224,7 +221,6 @@ const Modules = {
 
         <div class="panel">
           <h3>정관</h3>
-          <div class="flag-row">사업연도는 ${esc(c.fiscalYear) || "-"}</div>
           <div class="flag-row">제3자 신주발행 근거규정 ${flags.thirdPartyIssue ? "있음 ✓" : "없음 ✕"}</div>
           <div class="flag-row">우선주 발행 근거규정 ${flags.preferredStock ? "있음 ✓" : "없음 ✕"}</div>
           <div class="flag-row">스톡옵션 규정 ${flags.stockOption ? "있음 ✓" : "없음 ✕"}</div>
@@ -250,10 +246,14 @@ const Modules = {
         </div>
         <div class="panel">
           <h3>상호</h3>
-          <table class="kv"><tbody>
-            <tr><th>한글</th><td>${esc(c.name) || "-"}</td></tr>
-            <tr><th>영문</th><td>${esc(c.engName) || "-"}</td></tr>
-          </tbody></table>
+          ${
+            c.name || c.engName
+              ? `<table class="kv"><tbody>
+            ${c.name ? `<tr><th>한글</th><td>${esc(c.name)}</td></tr>` : ""}
+            ${c.engName ? `<tr><th>영문</th><td>${esc(c.engName)}</td></tr>` : ""}
+          </tbody></table>`
+              : `<div class="empty">등록된 상호가 없어요.</div>`
+          }
         </div>
       </div>
     `;
@@ -327,32 +327,24 @@ const Modules = {
     if (seals.usage && seals.usage.imageDataUrl) opts.push({ v: "usage", label: seals.usage.label || "사용인감" });
     return `
       <h3>도장 날인 — ${esc(fileName)}</h3>
-      <div class="form-grid">
+      <div class="form-grid" style="margin-bottom:10px;">
         <label>사용할 도장
           <select id="f_sealType">
             ${opts.map((o) => `<option value="${o.v}">${esc(o.label)}</option>`).join("")}
           </select>
         </label>
-        <label>날인 위치
-          <select id="f_sealPos">
-            <option value="br">우측 하단</option>
-            <option value="bl">좌측 하단</option>
-            <option value="tr">우측 상단</option>
-            <option value="tl">좌측 상단</option>
-          </select>
-        </label>
-        <label>날인할 페이지
-          <select id="f_sealPage">
-            <option value="last">마지막 페이지</option>
-            <option value="first">첫 페이지</option>
-            <option value="all">모든 페이지</option>
-          </select>
+        <label>페이지
+          <select id="f_sealPageNum"></select>
         </label>
       </div>
-      <p class="hint">선택한 위치 기준으로 도장 이미지가 자동으로 찍혀요. 정확한 좌표를 직접 지정하는 기능은 아직 없어요.</p>
+      <p class="hint" style="margin-top:-4px">아래 서류 미리보기에서 도장을 찍을 위치를 클릭하세요.</p>
+      <div class="seal-place-wrap" id="sealPlaceCanvasWrap">
+        <canvas id="sealPlaceCanvas"></canvas>
+        <img id="sealPlaceMarker" class="seal-place-marker" style="display:none" alt="도장 미리보기">
+      </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
-        <button class="btn btn-primary" id="confirmSealBtn">날인하기</button>
+        <button class="btn btn-primary" id="confirmSealBtn" disabled>날인하기</button>
       </div>
     `;
   },
@@ -368,7 +360,6 @@ const Modules = {
         <label>법인등록번호 <input id="f_regNo" value="${esc(c.regNo)}"></label>
         <label>사업자등록번호 <input id="f_bizNo" value="${esc(c.bizNo)}"></label>
         <label>설립일 <input type="date" id="f_foundedDate" value="${esc(c.foundedDate)}"></label>
-        <label>사업연도 <input id="f_fiscalYear" value="${esc(c.fiscalYear)}"></label>
         <label>자본금 <input id="f_capital" value="${esc(c.capital)}" placeholder="10,000,000원"></label>
         <label>발행주식 <input id="f_capitalShares" value="${esc(c.capitalShares)}" placeholder="총 100,000주 / 1종류"></label>
         <label>액면가 <input id="f_parValue" value="${esc(c.parValue)}" placeholder="100,000주 X 액면금 100원"></label>
