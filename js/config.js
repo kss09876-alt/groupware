@@ -11,5 +11,5 @@ const CONFIG = {
   // 3) 법인정보 서류를 AI로 자동 분석하는 기능을 쓰려면, Cloudflare Worker를 배포한 뒤
   //    그 주소(https://xxxx.workers.dev 형태)를 아래에 넣으세요. (README.md의 "AI 자동 채우기 설정" 참고)
   //    비워두면 "AI로 채우기" 버튼을 눌렀을 때 안내 메시지만 뜨고 동작하지 않아요.
-  AI_WORKER_URL: "https://groupware-ai.lively-bonus-c288.workers.dev",
+  AI_WORKER_URL: "https://groupware-ai.mute-grass-c2d7.workers.dev",
 };
