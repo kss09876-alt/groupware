@@ -88,6 +88,7 @@ async function onSignedIn(user) {
   if (dataFolderId) {
     showScreen("app");
     await goTab("dashboard");
+    runSnsAutoPublish();
     return;
   }
 
@@ -103,6 +104,7 @@ async function onSignedIn(user) {
       localStorage.setItem("gw_folderId", dataFolderId);
       showScreen("app");
       await goTab("dashboard");
+      runSnsAutoPublish();
       return;
     }
   } catch (e) {
@@ -891,13 +893,19 @@ function bindTabEvents(tab) {
       openModal(Modules.snsForm());
       $("#saveSnsBtn").addEventListener("click", async () => {
         const data = await loadModule("sns");
+        const date = $("#f_date").value || todayStr();
+        const time = $("#f_time").value || "09:00";
         data.items.push({
           id: uid(),
           platform: $("#f_platform").value,
           title: $("#f_title").value || "(제목없음)",
           content: $("#f_content").value,
           assignee: $("#f_assignee").value,
-          date: $("#f_date").value || todayStr(),
+          date,
+          time,
+          scheduledAt: `${date}T${time}`,
+          autoPublish: $("#f_autoPublish").checked,
+          calendarEventId: null,
           approver: $("#f_approver").value.trim(),
           status: "검토중",
         });
@@ -920,6 +928,8 @@ function bindTabEvents(tab) {
       b.addEventListener("click", async (e) => {
         e.stopPropagation();
         const data = await loadModule("sns");
+        const target = data.items.find((s) => s.id === b.dataset.delSns);
+        if (target?.calendarEventId) await removeSnsCalendarEvent(target.calendarEventId);
         data.items = data.items.filter((s) => s.id !== b.dataset.delSns);
         await saveModule("sns", data);
         refreshCurrentTab();
@@ -950,7 +960,66 @@ async function decideLeave(id, status) {
 async function decideSns(id, status) {
   const data = await loadModule("sns");
   const item = data.items.find((s) => s.id === id);
-  if (item) item.status = status;
+  if (!item) return;
+  item.status = status;
+  if (status === "게시완료") item.publishedAt = nowStr();
+  if (status === "승인" && item.autoPublish && item.scheduledAt) {
+    item.calendarEventId = await syncSnsCalendarEvent(item);
+  }
+  if (status === "반려" && item.calendarEventId) {
+    await removeSnsCalendarEvent(item.calendarEventId);
+    item.calendarEventId = null;
+  }
   await saveModule("sns", data);
   refreshCurrentTab();
 }
+
+// ---------------- SNS 예약 자동화 ----------------
+// 승인 + "자동 게시 처리"가 켜진 콘텐츠는 캘린더에 자동으로 일정이 등록되고,
+// 예정 시각이 지나면(앱이 열려있는 시점 기준) 자동으로 "게시완료"로 바뀌어요.
+// 주의: 순수 프론트엔드 앱이라 브라우저 탭이 열려있어야 체크가 동작해요.
+// 완전한 백그라운드 자동 게시(실제 SNS 플랫폼 업로드 포함)는 별도의 서버(Cloudflare
+// Worker의 cron 트리거 등)와 각 플랫폼 API 연동이 필요해요 — 다음 단계 작업이에요.
+async function syncSnsCalendarEvent(item) {
+  const cal = await loadModule("calendar");
+  let ev = item.calendarEventId ? cal.items.find((e) => e.id === item.calendarEventId) : null;
+  if (!ev) {
+    ev = { id: uid(), source: "sns", sourceId: item.id };
+    cal.items.push(ev);
+  }
+  ev.title = `[SNS 예약] ${item.platform} · ${item.title}`;
+  ev.date = item.date;
+  ev.endDate = "";
+  ev.memo = item.time ? `${item.time} 자동 게시 예정` : "자동 게시 예정";
+  await saveModule("calendar", cal);
+  return ev.id;
+}
+
+async function removeSnsCalendarEvent(eventId) {
+  const cal = await loadModule("calendar");
+  cal.items = cal.items.filter((e) => e.id !== eventId);
+  await saveModule("calendar", cal);
+}
+
+async function runSnsAutoPublish() {
+  if (!dataFolderId) return;
+  try {
+    const data = await loadModule("sns", true);
+    const now = new Date();
+    let changed = false;
+    for (const item of data.items) {
+      if (item.status === "승인" && item.autoPublish && item.scheduledAt && new Date(item.scheduledAt) <= now) {
+        item.status = "게시완료";
+        item.publishedAt = nowStr();
+        changed = true;
+      }
+    }
+    if (changed) {
+      await saveModule("sns", data);
+      if (["sns", "dashboard", "calendar"].includes(currentTab)) refreshCurrentTab();
+    }
+  } catch (e) {
+    console.error("SNS 자동 게시 확인 실패", e);
+  }
+}
+setInterval(runSnsAutoPublish, 5 * 60 * 1000);

@@ -581,19 +581,29 @@ const Modules = {
   // ---------------- SNS 운영 ----------------
   async sns(ctx) {
     const data = await ctx.load("sns");
-    const items = [...data.items].sort((a, b) => a.date.localeCompare(b.date));
+    const items = [...data.items].sort((a, b) => (a.scheduledAt || a.date).localeCompare(b.scheduledAt || b.date));
     const statusTag = (s) => `<span class="tag ${s === "게시완료" ? "tag-ok" : s === "반려" ? "tag-no" : s === "승인" ? "tag-ok" : "tag-wait"}">${s}</span>`;
+    const upcoming = items
+      .filter((s) => s.status === "승인" && s.autoPublish && s.scheduledAt)
+      .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
+      .slice(0, 5);
     return `
       <div class="toolbar"><button class="btn btn-primary" id="newSnsBtn">+ 콘텐츠 등록</button></div>
-      <p class="hint">※ 실제 인스타그램/페이스북 등에 자동 게시하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 워크플로우까지 지원해요.</p>
+      <p class="hint">✅ 예약 자동화: "자동 게시 처리"를 켜고 승인하면, 예정 시각이 되었을 때 앱이 열려있는 시점에 자동으로 "게시완료"로 바뀌고 캘린더에도 자동 등록돼요. (브라우저가 실제로 열려있어야 동작해요 — 완전한 백그라운드 자동 게시는 별도 서버 연동이 필요해요.)<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 → 예약 자동화 워크플로우까지 지원해요.</p>
+      ${upcoming.length ? `
+      <div class="panel" style="margin-bottom:16px;">
+        <h3>🤖 자동 게시 예정</h3>
+        ${upcoming.map((s) => `<div class="list-row"><div><span class="tag">${esc(s.date)} ${esc(s.time || "")}</span> <span class="tag">${esc(s.platform)}</span> ${esc(s.title)}</div></div>`).join("")}
+      </div>` : ""}
       <div class="panel">
         ${items.length ? items.map((s) => `
           <div class="list-row expand" data-sns="${s.id}">
             <div>
               ${statusTag(s.status)}
               <span class="tag">${esc(s.platform)}</span>
+              ${s.autoPublish ? `<span class="tag tag-ok">🤖 자동게시</span>` : ""}
               <b>${esc(s.title)}</b>
-              <span class="muted">담당 ${esc(s.assignee)} · 게시예정 ${esc(s.date)}</span>
+              <span class="muted">담당 ${esc(s.assignee)} · 게시예정 ${esc(s.date)}${s.time ? " " + esc(s.time) : ""}</span>
             </div>
             <span>
               ${s.status === "검토중" ? `<button class="btn btn-tiny btn-primary" data-sns-approve="${s.id}">승인</button><button class="btn btn-tiny btn-danger" data-sns-reject="${s.id}">반려</button>` : ""}
@@ -618,6 +628,8 @@ const Modules = {
         <label>내용/초안 <textarea id="f_content" rows="5"></textarea></label>
         <label>담당자 이름 <input id="f_assignee"></label>
         <label>게시 예정일 <input type="date" id="f_date" value="${todayStr()}"></label>
+        <label>게시 예정 시각 <input type="time" id="f_time" value="09:00"></label>
+        <label class="checkbox-label"><input type="checkbox" id="f_autoPublish" checked> 승인되면 예정 시각에 자동으로 "게시완료" 처리 + 캘린더 자동 등록</label>
         <label>승인자 이메일 <input id="f_approver" placeholder="approver@company.com"></label>
       </div>
       <div class="modal-actions">
