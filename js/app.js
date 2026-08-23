@@ -183,7 +183,10 @@ const TAB_TITLES = {
 };
 
 $$(".nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => goTab(btn.dataset.tab));
+  btn.addEventListener("click", () => {
+    goTab(btn.dataset.tab);
+    closeMobileSidebar();
+  });
 });
 
 async function goTab(tab) {
@@ -196,6 +199,21 @@ async function goTab(tab) {
   $("#content").innerHTML = html;
   bindTabEvents(tab);
 }
+
+// ---------------- 모바일 사이드바 열기/닫기 ----------------
+// 화면이 좁을 땐 사이드바를 화면 밖으로 숨겨뒀다가(css) 햄버거 버튼을 누르면
+// 슬라이드로 열어주는 방식이에요. 데스크탑에서는 이 클래스들이 css에서 무시돼요.
+function openMobileSidebar() {
+  $("#sidebar")?.classList.add("open");
+  $("#sidebarOverlay")?.classList.add("open");
+}
+function closeMobileSidebar() {
+  $("#sidebar")?.classList.remove("open");
+  $("#sidebarOverlay")?.classList.remove("open");
+}
+$("#mobileMenuBtn")?.addEventListener("click", openMobileSidebar);
+$("#sidebarCloseBtn")?.addEventListener("click", closeMobileSidebar);
+$("#sidebarOverlay")?.addEventListener("click", closeMobileSidebar);
 
 async function refreshCurrentTab() {
   const html = await Modules[currentTab](ctx);

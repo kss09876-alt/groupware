@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>사내 그룹웨어</title>
-<link rel="stylesheet" href="css/style.css?v=4" />
+<link rel="stylesheet" href="css/style.css?v=5" />
 </head>
 <body>
 
@@ -36,10 +36,12 @@
 
   <!-- 메인 앱 -->
   <div id="app" class="app" style="display:none;">
-    <aside class="sidebar">
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+    <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
         <span class="sidebar-logo">🏢</span>
         <span class="sidebar-title">그룹웨어</span>
+        <button id="sidebarCloseBtn" class="sidebar-close-btn" aria-label="메뉴 닫기">✕</button>
       </div>
       <nav class="sidebar-nav">
         <button class="nav-item active" data-tab="dashboard"><span class="nav-icon">🏠</span>대시보드</button>
@@ -62,7 +64,10 @@
 
     <main class="main">
       <header class="topbar">
-        <h2 id="pageTitle">대시보드</h2>
+        <div class="topbar-left">
+          <button id="mobileMenuBtn" class="mobile-menu-btn" aria-label="메뉴 열기">☰</button>
+          <h2 id="pageTitle">대시보드</h2>
+        </div>
         <div id="syncStatus" class="sync-status">동기화됨</div>
       </header>
       <div id="content" class="content"></div>
@@ -74,12 +79,12 @@
     <div id="modalBox" class="modal-box"></div>
   </div>
 
-  <script src="js/config.js?v=11"></script>
+  <script src="js/config.js?v=12"></script>
   <script async defer src="https://accounts.google.com/gsi/client"></script>
   <script async defer src="https://apis.google.com/js/api.js"></script>
   <!-- 인감 날인(도장 찍기) 기능에 필요한 pdf-lib / pdf.js는 그 기능을 쓸 때만 불러와요 (js/app.js의 ensurePdfLibs 참고) -->
-  <script src="js/drive.js?v=11"></script>
-  <script src="js/modules.js?v=11"></script>
-  <script src="js/app.js?v=11"></script>
+  <script src="js/drive.js?v=12"></script>
+  <script src="js/modules.js?v=12"></script>
+  <script src="js/app.js?v=12"></script>
 </body>
 </html>
