@@ -49,6 +49,11 @@ const DEFAULTS = {
       bizReg: { label: "사업자등록증", fileId: null, fileName: null, webViewLink: null, updatedAt: null },
       shareholderList: { label: "주주명부", fileId: null, fileName: null, webViewLink: null, updatedAt: null },
     },
+    seals: {
+      corporate: { label: "법인인감", imageDataUrl: null, updatedAt: null },
+      usage: { label: "사용인감", imageDataUrl: null, updatedAt: null },
+    },
+    sealedDocs: [],
   },
   notice: { items: [] },
   calendar: { items: [] },
@@ -73,6 +78,11 @@ function normalizeCorp(c) {
   Object.keys(d.documents).forEach((key) => {
     out.documents[key] = { ...d.documents[key], ...(out.documents[key] || {}) };
   });
+  out.seals = { ...d.seals, ...(c.seals || {}) };
+  Object.keys(d.seals).forEach((key) => {
+    out.seals[key] = { ...d.seals[key], ...(out.seals[key] || {}) };
+  });
+  out.sealedDocs = c.sealedDocs || [];
   return out;
 }
 
@@ -147,6 +157,17 @@ const Modules = {
   // ---------------- 법인정보 ----------------
   async corp(ctx) {
     const c = await ctx.load("corp");
+    const sub = ctx.corpSubTab || "info";
+    const nav = `
+      <div class="subtab-nav">
+        <button class="subtab-btn ${sub === "info" ? "active" : ""}" data-corp-subtab="info">법인정보</button>
+        <button class="subtab-btn ${sub === "seal" ? "active" : ""}" data-corp-subtab="seal">인감관리</button>
+      </div>`;
+    const body = sub === "seal" ? Modules.corpSealBody(c) : Modules.corpInfoBody(c);
+    return nav + body;
+  },
+
+  corpInfoBody(c) {
     const flags = c.articleFlags || {};
     const meetings = c.meetings || {};
     const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("ko-KR") : null);
@@ -233,22 +254,105 @@ const Modules = {
             <tr><th>한글</th><td>${esc(c.name) || "-"}</td></tr>
             <tr><th>영문</th><td>${esc(c.engName) || "-"}</td></tr>
           </tbody></table>
-          <h3 style="margin-top:16px">공고방법</h3>
-          <div class="list-row">${esc(c.disclosureMethod) || "미등록"}</div>
         </div>
-        <div class="panel">
-          <div class="toolbar" style="margin-bottom:8px"><h3 style="margin:0">등록부상 목적</h3><button class="btn btn-tiny btn-secondary" id="addPurposeBtn">+ 추가</button></div>
-          ${c.registeredPurposes.map((p, i) => `<div class="list-row">${esc(p)}<button class="btn btn-tiny btn-danger" data-del-purpose="${i}">삭제</button></div>`).join("") || `<div class="empty">등록된 목적이 없어요.</div>`}
-        </div>
+      </div>
+    `;
+  },
 
-        <div class="panel">
-          <h3>스톡옵션</h3>
-          <div class="list-row">${esc(c.stockOptionRule) || "-"}</div>
+  // ---------------- 인감관리 ----------------
+  corpSealBody(c) {
+    const seals = c.seals || {};
+    const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("ko-KR") : null);
+    const sealCard = (type, seal) => `
+      <div class="panel seal-card">
+        <div class="seal-card-head">
+          <h3 style="margin:0">${esc(seal.label) || (type === "corporate" ? "법인인감" : "사용인감")}</h3>
+          ${seal.imageDataUrl ? `<span class="muted">업데이트: ${fmtDate(seal.updatedAt)}</span>` : ""}
         </div>
-        <div class="panel">
-          <h3>주식의 양도제한</h3>
-          <div class="list-row">${esc(c.transferRestrictionRule) || "-"}</div>
+        <div class="seal-preview">
+          ${seal.imageDataUrl ? `<img src="${seal.imageDataUrl}" alt="${esc(seal.label)}" />` : `<div class="seal-empty">미등록</div>`}
         </div>
+        <div class="doc-actions" style="justify-content:center; margin-top:10px;">
+          <label class="btn btn-tiny btn-primary doc-upload-label">
+            ${seal.imageDataUrl ? "이미지 변경" : "인감 등록"}
+            <input type="file" class="seal-upload-input" accept="image/*" data-seal-type="${type}" hidden>
+          </label>
+          ${seal.imageDataUrl ? `<button class="btn btn-tiny btn-danger" data-del-seal="${type}">삭제</button>` : ""}
+        </div>
+      </div>`;
+
+    const docs = (c.sealedDocs || [])
+      .map(
+        (d) => `
+        <div class="list-row">
+          <div>
+            <b>${esc(d.name)}</b>
+            <span class="tag">${esc(d.sealLabel)}</span>
+            <span class="muted">${fmtDate(d.createdAt)}</span>
+          </div>
+          <div class="doc-actions">
+            <button class="btn btn-tiny btn-secondary" data-download-sealed-doc data-file-id="${esc(d.fileId)}" data-file-name="${esc(d.name)}">다운로드</button>
+            <button class="btn btn-tiny btn-danger" data-del-sealed-doc data-id="${esc(d.id)}">삭제</button>
+          </div>
+        </div>`
+      )
+      .join("");
+
+    return `
+      <p class="hint">등록한 인감 이미지(투명 배경 PNG 권장)를 서류(PDF)에 자동으로 찍어드려요. 정부 등기·공증 효력이 있는 정식 전자서명은 아니고, 사내에서 서류에 도장을 찍은 것처럼 표시해주는 기능이에요.</p>
+      <div class="grid grid-2">
+        ${sealCard("corporate", seals.corporate || {})}
+        ${sealCard("usage", seals.usage || {})}
+      </div>
+
+      <div class="panel">
+        <h3>도장 찍을 서류 업로드</h3>
+        <p class="hint" style="margin-top:-4px">10MB 이하의 PDF 파일을 올려주세요. (jpg/png는 자동으로 1장짜리 PDF로 변환돼요)</p>
+        <label class="btn btn-primary doc-upload-label">
+          파일 선택
+          <input type="file" id="sealDocInput" accept="application/pdf,image/png,image/jpeg" hidden>
+        </label>
+      </div>
+
+      <div class="panel">
+        <h3>날인된 문서 (총 ${(c.sealedDocs || []).length}건)</h3>
+        ${docs || `<div class="empty">아직 날인한 문서가 없어요.</div>`}
+      </div>
+    `;
+  },
+
+  sealPlaceForm(fileName, seals) {
+    const opts = [];
+    if (seals.corporate && seals.corporate.imageDataUrl) opts.push({ v: "corporate", label: seals.corporate.label || "법인인감" });
+    if (seals.usage && seals.usage.imageDataUrl) opts.push({ v: "usage", label: seals.usage.label || "사용인감" });
+    return `
+      <h3>도장 날인 — ${esc(fileName)}</h3>
+      <div class="form-grid">
+        <label>사용할 도장
+          <select id="f_sealType">
+            ${opts.map((o) => `<option value="${o.v}">${esc(o.label)}</option>`).join("")}
+          </select>
+        </label>
+        <label>날인 위치
+          <select id="f_sealPos">
+            <option value="br">우측 하단</option>
+            <option value="bl">좌측 하단</option>
+            <option value="tr">우측 상단</option>
+            <option value="tl">좌측 상단</option>
+          </select>
+        </label>
+        <label>날인할 페이지
+          <select id="f_sealPage">
+            <option value="last">마지막 페이지</option>
+            <option value="first">첫 페이지</option>
+            <option value="all">모든 페이지</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">선택한 위치 기준으로 도장 이미지가 자동으로 찍혀요. 정확한 좌표를 직접 지정하는 기능은 아직 없어요.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="confirmSealBtn">날인하기</button>
       </div>
     `;
   },
@@ -269,18 +373,15 @@ const Modules = {
         <label>발행주식 <input id="f_capitalShares" value="${esc(c.capitalShares)}" placeholder="총 100,000주 / 1종류"></label>
         <label>액면가 <input id="f_parValue" value="${esc(c.parValue)}" placeholder="100,000주 X 액면금 100원"></label>
         <label>본점 주소 <input id="f_address" value="${esc(c.address)}"></label>
-        <label>공고방법 <input id="f_disclosureMethod" value="${esc(c.disclosureMethod)}" placeholder="일간아시아경제신문에 공고"></label>
         <label>정기주주총회 <input id="f_annual" value="${esc(meetings.annual)}"></label>
         <label>임시주주총회 <input id="f_special" value="${esc(meetings.special)}"></label>
         <label>이사회 <input id="f_board" value="${esc(meetings.board)}"></label>
-        <label>스톡옵션 규정 <input id="f_stockOptionRule" value="${esc(c.stockOptionRule)}"></label>
-        <label>주식양도제한 규정 <input id="f_transferRestrictionRule" value="${esc(c.transferRestrictionRule)}"></label>
         <label class="checkbox-label"><input type="checkbox" id="f_thirdPartyIssue" ${flags.thirdPartyIssue ? "checked" : ""}> 제3자 신주발행 근거규정 있음</label>
         <label class="checkbox-label"><input type="checkbox" id="f_preferredStock" ${flags.preferredStock ? "checked" : ""}> 우선주 발행 근거규정 있음</label>
         <label class="checkbox-label"><input type="checkbox" id="f_stockOption" ${flags.stockOption ? "checked" : ""}> 스톡옵션 규정 있음</label>
         <label class="checkbox-label"><input type="checkbox" id="f_transferRestriction" ${flags.transferRestriction ? "checked" : ""}> 제3자 주식양도제한 규정 있음</label>
       </div>
-      <p class="hint">주주·임원·지점·목적은 저장 후 법인정보 화면의 각 카드에서 "+ 추가" 버튼으로 등록할 수 있어요.</p>
+      <p class="hint">주주·임원·지점은 저장 후 법인정보 화면의 각 카드에서 "+ 추가" 버튼으로 등록할 수 있어요.</p>
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
         <button class="btn btn-primary" id="saveCorpBtn">저장</button>

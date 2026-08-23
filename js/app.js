@@ -2,6 +2,7 @@
 
 let dataFolderId = localStorage.getItem("gw_folderId") || null;
 let currentTab = "dashboard";
+let corpSubTab = "info"; // 법인정보 탭 내부 하위탭: "info" | "seal"
 const cache = {}; // 모듈별 로드된 데이터 캐시 (탭 전환 시 재사용, 저장 후 무효화)
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -127,6 +128,9 @@ const ctx = {
   get user() {
     return Drive.user;
   },
+  get corpSubTab() {
+    return corpSubTab;
+  },
   load: loadModule,
 };
 
@@ -147,6 +151,7 @@ $$(".nav-item").forEach((btn) => {
 
 async function goTab(tab) {
   currentTab = tab;
+  if (tab === "corp") corpSubTab = "info";
   $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("#pageTitle").textContent = TAB_TITLES[tab];
   $("#content").innerHTML = `<div class="loading">불러오는 중...</div>`;
@@ -220,6 +225,90 @@ function applyAiFields(c, fields) {
   return c;
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ---------------- 인감관리: 서류에 도장 이미지 찍기 (pdf-lib 사용) ----------------
+// 실제 등기소/공증 효력이 있는 전자서명이 아니라, 사내 서류에 도장 이미지를
+// 시각적으로 얹어주는 기능입니다. jpg/png는 먼저 1페이지짜리 PDF로 감싼 뒤 처리합니다.
+async function stampAndSaveDocument(file, sealType, pos, pageMode) {
+  setSyncStatus("도장 찍는 중...", true);
+  try {
+    if (typeof PDFLib === "undefined") {
+      throw new Error("PDF 처리 라이브러리를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침 해주세요.");
+    }
+    const { PDFDocument } = PDFLib;
+    const c = await loadModule("corp");
+    const seal = c.seals && c.seals[sealType];
+    if (!seal || !seal.imageDataUrl) throw new Error("등록된 도장이 없어요.");
+
+    const arrayBuf = await file.arrayBuffer();
+    const isImage = file.type.startsWith("image/");
+    let pdfBytes;
+    if (isImage) {
+      const doc = await PDFDocument.create();
+      const img = file.type.includes("png") ? await doc.embedPng(arrayBuf) : await doc.embedJpg(arrayBuf);
+      const page = doc.addPage([img.width, img.height]);
+      page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+      pdfBytes = await doc.save();
+    } else {
+      pdfBytes = arrayBuf;
+    }
+
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const sealBytes = await (await fetch(seal.imageDataUrl)).arrayBuffer();
+    const sealImg = seal.imageDataUrl.startsWith("data:image/png")
+      ? await pdfDoc.embedPng(sealBytes)
+      : await pdfDoc.embedJpg(sealBytes);
+
+    const pages = pdfDoc.getPages();
+    const targetPages = pageMode === "all" ? pages : pageMode === "first" ? [pages[0]] : [pages[pages.length - 1]];
+
+    const sealHeight = 90;
+    const sealWidth = sealHeight * (sealImg.width / sealImg.height);
+    const margin = 36;
+    targetPages.forEach((page) => {
+      const { width, height } = page.getSize();
+      let x, y;
+      if (pos === "br") { x = width - margin - sealWidth; y = margin; }
+      else if (pos === "bl") { x = margin; y = margin; }
+      else if (pos === "tr") { x = width - margin - sealWidth; y = height - margin - sealHeight; }
+      else { x = margin; y = height - margin - sealHeight; }
+      page.drawImage(sealImg, { x, y, width: sealWidth, height: sealHeight, opacity: 0.92 });
+    });
+
+    const stampedBytes = await pdfDoc.save();
+    const stampedBlob = new Blob([stampedBytes], { type: "application/pdf" });
+    const baseName = file.name.replace(/\.[^.]+$/, "");
+    const stampedFile = new File([stampedBlob], `${baseName}_날인.pdf`, { type: "application/pdf" });
+
+    const uploaded = await Drive.uploadDocument(dataFolderId, stampedFile, null);
+
+    const c2 = await loadModule("corp");
+    c2.sealedDocs = c2.sealedDocs || [];
+    c2.sealedDocs.unshift({
+      id: uid(),
+      name: stampedFile.name,
+      sealLabel: seal.label || (sealType === "corporate" ? "법인인감" : "사용인감"),
+      fileId: uploaded.id,
+      webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+      createdAt: new Date().toISOString(),
+    });
+    await saveModule("corp", c2);
+    refreshCurrentTab();
+  } catch (err) {
+    console.error(err);
+    setSyncStatus("날인 실패", false);
+    alert("도장 날인에 실패했어요: " + (err && err.message ? err.message : "알 수 없는 오류"));
+  }
+}
+
 // ---------------- 탭별 이벤트 바인딩 ----------------
 function bindTabEvents(tab) {
   if (tab === "dashboard") {
@@ -227,6 +316,13 @@ function bindTabEvents(tab) {
   }
 
   if (tab === "corp") {
+    $$("[data-corp-subtab]").forEach((b) =>
+      b.addEventListener("click", () => {
+        corpSubTab = b.dataset.corpSubtab;
+        refreshCurrentTab();
+      })
+    );
+
     $("#editCorpBtn")?.addEventListener("click", async () => {
       const c = await loadModule("corp");
       openModal(Modules.corpEditForm(c));
@@ -243,9 +339,6 @@ function bindTabEvents(tab) {
           capitalShares: $("#f_capitalShares").value,
           parValue: $("#f_parValue").value,
           address: $("#f_address").value,
-          disclosureMethod: $("#f_disclosureMethod").value,
-          stockOptionRule: $("#f_stockOptionRule").value,
-          transferRestrictionRule: $("#f_transferRestrictionRule").value,
           meetings: {
             annual: $("#f_annual").value,
             special: $("#f_special").value,
@@ -320,23 +413,6 @@ function bindTabEvents(tab) {
       })
     );
 
-    $("#addPurposeBtn")?.addEventListener("click", async () => {
-      const purpose = prompt("등록부상 목적을 입력하세요");
-      if (!purpose) return;
-      const c = await loadModule("corp");
-      c.registeredPurposes.push(purpose);
-      await saveModule("corp", c);
-      refreshCurrentTab();
-    });
-    $$("[data-del-purpose]").forEach((b) =>
-      b.addEventListener("click", async () => {
-        const c = await loadModule("corp");
-        c.registeredPurposes.splice(Number(b.dataset.delPurpose), 1);
-        await saveModule("corp", c);
-        refreshCurrentTab();
-      })
-    );
-
     $$(".doc-upload-input").forEach((input) =>
       input.addEventListener("change", async (e) => {
         const file = e.target.files && e.target.files[0];
@@ -394,6 +470,106 @@ function bindTabEvents(tab) {
           btn.textContent = originalLabel;
           btn.disabled = false;
         }
+      })
+    );
+
+    // ---- 인감관리 하위탭 ----
+    $$(".seal-upload-input").forEach((input) =>
+      input.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        if (file.size > 3 * 1024 * 1024) {
+          alert("도장 이미지는 3MB 이하로 올려주세요.");
+          e.target.value = "";
+          return;
+        }
+        const sealType = input.dataset.sealType;
+        setSyncStatus("인감 등록 중...", true);
+        try {
+          const dataUrl = await fileToDataUrl(file);
+          const c = await loadModule("corp");
+          c.seals[sealType] = {
+            label: (c.seals[sealType] && c.seals[sealType].label) || (sealType === "corporate" ? "법인인감" : "사용인감"),
+            imageDataUrl: dataUrl,
+            updatedAt: new Date().toISOString(),
+          };
+          await saveModule("corp", c);
+          refreshCurrentTab();
+        } catch (err) {
+          console.error(err);
+          setSyncStatus("등록 실패", false);
+          alert("인감 이미지 등록에 실패했어요.");
+        }
+      })
+    );
+
+    $$("[data-del-seal]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        if (!confirm("등록된 인감을 삭제할까요?")) return;
+        const sealType = b.dataset.delSeal;
+        const c = await loadModule("corp");
+        c.seals[sealType] = { label: c.seals[sealType] && c.seals[sealType].label, imageDataUrl: null, updatedAt: null };
+        await saveModule("corp", c);
+        refreshCurrentTab();
+      })
+    );
+
+    $("#sealDocInput")?.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const c = await loadModule("corp");
+      const hasSeal = (c.seals.corporate && c.seals.corporate.imageDataUrl) || (c.seals.usage && c.seals.usage.imageDataUrl);
+      if (!hasSeal) {
+        alert("먼저 법인인감 또는 사용인감을 등록해주세요.");
+        e.target.value = "";
+        return;
+      }
+      openModal(Modules.sealPlaceForm(file.name, c.seals));
+      $("#confirmSealBtn").addEventListener("click", async () => {
+        const sealType = $("#f_sealType").value;
+        const pos = $("#f_sealPos").value;
+        const pageMode = $("#f_sealPage").value;
+        closeModal();
+        await stampAndSaveDocument(file, sealType, pos, pageMode);
+        e.target.value = "";
+      });
+    });
+
+    $$("[data-download-sealed-doc]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const fileId = b.dataset.fileId;
+        const fname = b.dataset.fileName || "document.pdf";
+        b.disabled = true;
+        try {
+          const { base64, mimeType } = await Drive.downloadFileAsBase64(fileId);
+          const bin = atob(base64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const blob = new Blob([bytes], { type: mimeType || "application/pdf" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = fname;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          console.error(err);
+          alert("다운로드에 실패했어요.");
+        } finally {
+          b.disabled = false;
+        }
+      })
+    );
+
+    $$("[data-del-sealed-doc]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        if (!confirm("목록에서 삭제할까요? (드라이브에 저장된 파일 자체는 남아있어요)")) return;
+        const c = await loadModule("corp");
+        c.sealedDocs = (c.sealedDocs || []).filter((d) => d.id !== b.dataset.id);
+        await saveModule("corp", c);
+        refreshCurrentTab();
       })
     );
   }
