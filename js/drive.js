@@ -114,7 +114,25 @@ const Drive = (() => {
   }
 
   // ---- 폴더 관련 ----
+  // 구글 드라이브 자체를 "서버"로 쓰는 구조라, 같은 계정에 데이터 폴더가 여러 개
+  // 생기면 안 돼요 (탭마다/기기마다 새로 로그인할 때 로컬에 저장된 폴더 ID가 없으면
+  // 예전엔 매번 새 폴더를 만들어버렸어요). 그래서 폴더를 만들기 전에 항상 먼저
+  // 내 드라이브에 이미 같은 이름의 폴더(휴지통 제외)가 있는지부터 찾아보고, 있으면
+  // 그 폴더를 그대로 재사용합니다. 정말 하나도 없을 때만 새로 만들어요.
+  async function findDataFolder() {
+    const res = await gapi.client.drive.files.list({
+      q: `mimeType='application/vnd.google-apps.folder' and name='${CONFIG.DATA_FOLDER_NAME}' and trashed=false and 'me' in owners`,
+      fields: "files(id, name, createdTime)",
+      spaces: "drive",
+      orderBy: "createdTime",
+    });
+    const files = (res.result.files || []).sort((a, b) => (a.createdTime || "").localeCompare(b.createdTime || ""));
+    return files[0] || null;
+  }
+
   async function createDataFolder() {
+    const existing = await findDataFolder();
+    if (existing) return existing;
     const res = await gapi.client.drive.files.create({
       resource: {
         name: CONFIG.DATA_FOLDER_NAME,
@@ -263,6 +281,7 @@ const Drive = (() => {
     requestSignIn,
     requestSignInConsent,
     signOut,
+    findDataFolder,
     createDataFolder,
     openFolderPicker,
     readCollection,

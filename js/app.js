@@ -88,13 +88,32 @@ async function onSignedIn(user) {
   if (dataFolderId) {
     showScreen("app");
     await goTab("dashboard");
-  } else {
-    showScreen("folderScreen");
+    return;
   }
+
+  // 이 브라우저/기기에 저장된 폴더 ID가 없어도, 구글 드라이브(=서버) 자체에는
+  // 이미 데이터 폴더가 있을 수 있어요. 화면을 보여주기 전에 먼저 조용히 찾아보고,
+  // 있으면 그걸 그대로 연결해서 "새 폴더 만들기"를 다시 누르지 않아도 되게 해요.
+  showScreen("folderScreen");
+  $("#folderStatus").textContent = "데이터 폴더 확인 중...";
+  try {
+    const existing = await Drive.findDataFolder();
+    if (existing) {
+      dataFolderId = existing.id;
+      localStorage.setItem("gw_folderId", dataFolderId);
+      showScreen("app");
+      await goTab("dashboard");
+      return;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  $("#folderStatus").textContent = "";
 }
 
 $("#createFolderBtn")?.addEventListener("click", async () => {
   $("#folderStatus").textContent = "폴더를 만드는 중...";
+  // createDataFolder는 이미 같은 이름의 폴더가 있으면 새로 만들지 않고 그 폴더를 재사용해요.
   const folder = await Drive.createDataFolder();
   dataFolderId = folder.id;
   localStorage.setItem("gw_folderId", dataFolderId);
