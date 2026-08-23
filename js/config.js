@@ -7,7 +7,7 @@ const CONFIG = {
   API_KEY: "AIzaSyBXYZF1azXr0CKon5CQ24YYDrknKUzEd44",
   // drive.file 스코프: 이 앱이 만들거나, 사용자가 Picker로 명시적으로 연 파일/폴더에만 접근합니다.
   SCOPES: "https://www.googleapis.com/auth/drive.file profile email",
-  DATA_FOLDER_NAME: "그룹웨어_data",
+  DATA_FOLDER_NAME: "groupware_data",
   // 3) 법인정보 서류를 AI로 자동 분석하는 기능을 쓰려면, Cloudflare Worker를 배포한 뒤
   //    그 주소(https://xxxx.workers.dev 형태)를 아래에 넣으세요. (README.md의 "AI 자동 채우기 설정" 참고)
   //    비워두면 "AI로 채우기" 버튼을 눌렀을 때 안내 메시지만 뜨고 동작하지 않아요.

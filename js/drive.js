@@ -166,13 +166,18 @@ const Drive = (() => {
   }
 
   // ---- JSON "컬렉션 파일" 읽기/쓰기 ----
+  // 같은 폴더 안에 같은 이름의 파일이 실수로 여러 개 생겼더라도(예: 여러 기기에서
+  // 거의 동시에 처음 접속) 항상 "가장 먼저 만들어진 파일"을 일관되게 골라서 써요.
+  // 그래야 매번 다른 파일이 선택되어 데이터가 왔다갔다 하는 일이 없어요.
   async function findFileInFolder(folderId, filename) {
     const res = await gapi.client.drive.files.list({
       q: `'${folderId}' in parents and name='${filename}' and trashed=false`,
-      fields: "files(id, name)",
+      fields: "files(id, name, createdTime)",
       spaces: "drive",
+      orderBy: "createdTime",
     });
-    return res.result.files && res.result.files[0];
+    const files = (res.result.files || []).sort((a, b) => (a.createdTime || "").localeCompare(b.createdTime || ""));
+    return files[0];
   }
 
   async function ensureFile(folderId, filename, initialData) {
