@@ -1120,10 +1120,11 @@ async function fetchDailyTrends() {
   try {
     const corp = await loadModule("corp");
     const businessContext = corp.registeredPurposes && corp.registeredPurposes.length ? corp.registeredPurposes.join(", ") : corp.name || "";
+    const location = corp.address || "";
     const res = await fetch(CONFIG.AI_WORKER_URL + "/daily-trends", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ businessContext, today: todayStr() }),
+      body: JSON.stringify({ businessContext, location, today: todayStr() }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || data.error) {

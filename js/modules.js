@@ -656,7 +656,7 @@ const Modules = {
       <div class="toolbar">
         <button class="btn btn-primary" id="fetchTrendsBtn">${isToday && items.length ? "🔄 새 아이디어 다시 뽑기" : "🔥 오늘의 아이디어 뽑기"}</button>
       </div>
-      <p class="hint">"아트아트(artart.today)" 같은 감성으로, 예술·디자인·컬처·라이프 영역의 흥미로운 콘텐츠 아이디어 10가지를 AI가 매번 새로 브레인스토밍해줘요(실시간 뉴스가 아니라 AI가 창작한 소재예요). 마음에 드는 걸 고르면 문구+이미지까지 자동으로 만들어드려요.</p>
+      <p class="hint">"아트아트(artart.today)"·"줌테일(zoomtale)" 같은 감성으로, 예술·디자인·컬처·라이프 영역의 흥미로운 콘텐츠 아이디어 7가지 + 우리 동네/지역과 연결된 "로컬" 소재 3가지를 AI가 매번 새로 브레인스토밍해줘요(실시간 뉴스가 아니라 AI가 창작한 소재예요, 법인정보 탭의 주소를 참고해요). 마음에 드는 걸 고르면 문구+이미지까지 자동으로 만들어드리고, 목표/실적 탭에서 일반 소재와 로컬 소재 중 뭐가 더 반응이 좋은지 비교해볼 수 있어요.</p>
       <div id="trendsResult">
         ${items.length ? Modules.trendsList(items) : `<div class="empty">${isToday ? "아이디어를 뽑았지만 결과가 없어요." : "아직 오늘의 아이디어를 뽑지 않았어요. 위 버튼을 눌러주세요."}</div>`}
       </div>
