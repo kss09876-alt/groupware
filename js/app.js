@@ -1263,12 +1263,14 @@ async function generateAiNarration() {
     const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-speech", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.slice(0, 800), lang: "kr" }),
+      body: JSON.stringify({ text: text.slice(0, 800) }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || data.error) {
-      const attemptsDetail = data && data.attempts ? "\n시도한 언어코드: " + data.attempts.map((a) => `${a.lang}(${a.detail})`).join(", ") : "";
-      throw new Error(((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")") + attemptsDetail);
+      let detail = (data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")";
+      if (data && data.elevenLabsError) detail += `\nElevenLabs: ${data.elevenLabsError.status} ${data.elevenLabsError.detail}`;
+      if (data && data.melottsAttempts) detail += "\nMeloTTS: " + data.melottsAttempts.map((a) => `${a.lang}(${a.detail})`).join(", ");
+      throw new Error(detail);
     }
     const byteChars = atob(data.audio);
     const bytes = new Uint8Array(byteChars.length);
@@ -1276,11 +1278,11 @@ async function generateAiNarration() {
     aiNarrationBlob = new Blob([bytes], { type: data.mimeType || "audio/mpeg" });
     const url = URL.createObjectURL(aiNarrationBlob);
     $("#aiNarrationPreview").innerHTML = `<audio src="${url}" controls style="margin-top:8px;"></audio>`;
-    statusEl.textContent = "완성했어요!";
+    statusEl.textContent = data.provider === "elevenlabs" ? "완성했어요! (ElevenLabs)" : "완성했어요!";
   } catch (e) {
     statusEl.textContent = "";
     aiNarrationBlob = null;
-    alert("나레이션 음성 생성에 실패했어요: " + e.message + "\n(한국어 음성이 아직 지원되지 않을 수 있어요. 음성 없이 계속 진행하셔도 돼요.)");
+    alert("나레이션 음성 생성에 실패했어요: " + e.message + "\n(음성 없이 계속 진행하셔도 돼요.)");
   } finally {
     btn.disabled = false;
   }
