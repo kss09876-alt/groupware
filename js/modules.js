@@ -654,11 +654,11 @@ const Modules = {
     const items = isToday ? t.items || [] : [];
     return `
       <div class="toolbar">
-        <button class="btn btn-primary" id="fetchTrendsBtn">${isToday && items.length ? "🔄 다시 수집하기" : "🔥 오늘의 이슈 수집하기"}</button>
+        <button class="btn btn-primary" id="fetchTrendsBtn">${isToday && items.length ? "🔄 새 아이디어 다시 뽑기" : "🔥 오늘의 아이디어 뽑기"}</button>
       </div>
-      <p class="hint">구글 뉴스(무료, 키 불필요)에서 오늘의 주요 이슈를 모아, 회사 업종에 맞춰 도달률이 높을 만한 10가지를 AI가 추천해줘요. 하루 한 번 수집해두면 그날은 그대로 재사용돼요(위 버튼으로 언제든 다시 수집 가능). 마음에 드는 걸 고르면 문구+이미지까지 자동으로 만들어드려요.</p>
+      <p class="hint">"아트아트(artart.today)" 같은 감성으로, 예술·디자인·컬처·라이프 영역의 흥미로운 콘텐츠 아이디어 10가지를 AI가 매번 새로 브레인스토밍해줘요(실시간 뉴스가 아니라 AI가 창작한 소재예요). 마음에 드는 걸 고르면 문구+이미지까지 자동으로 만들어드려요.</p>
       <div id="trendsResult">
-        ${items.length ? Modules.trendsList(items) : `<div class="empty">${isToday ? "이슈를 수집했지만 추천 결과가 없어요." : "아직 오늘의 이슈를 수집하지 않았어요. 위 버튼을 눌러주세요."}</div>`}
+        ${items.length ? Modules.trendsList(items) : `<div class="empty">${isToday ? "아이디어를 뽑았지만 결과가 없어요." : "아직 오늘의 아이디어를 뽑지 않았어요. 위 버튼을 눌러주세요."}</div>`}
       </div>
     `;
   },
@@ -670,13 +670,12 @@ const Modules = {
           .map(
             (t, i) => `
           <div class="panel">
-            <div class="muted" style="margin-bottom:6px;">#${i + 1} · <span class="tag">${esc(t.platform)}</span></div>
+            <div class="muted" style="margin-bottom:6px;"><span class="tag">${esc(t.category)}</span> · <span class="tag">${esc(t.platform)}</span></div>
             <b>${esc(t.title)}</b>
-            <p style="font-size:13px; margin:8px 0;">💡 ${esc(t.angle)}</p>
+            <p style="font-size:13px; margin:8px 0;">💡 ${esc(t.hook)}</p>
             <p class="muted" style="font-size:12px;">${esc(t.reason)}</p>
             <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
               <button class="btn btn-primary btn-tiny" data-use-trend="${i}">🤖 이걸로 자동 콘텐츠 만들기</button>
-              ${t.link ? `<a href="${esc(t.link)}" target="_blank" rel="noopener" class="btn btn-secondary btn-tiny">원문 보기</a>` : ""}
             </div>
           </div>
         `

@@ -1101,10 +1101,11 @@ async function runSnsAutoPublish() {
 }
 setInterval(runSnsAutoPublish, 5 * 60 * 1000);
 
-// ---------------- 오늘의 추천 (이슈 수집 + AI 도달률 추천) ----------------
-// 구글 뉴스 RSS(무료, 키 불필요)에서 오늘의 헤드라인을 모아 Worker에 보내면,
-// Gemini가 회사 업종에 맞춰 도달률 높을 만한 10개를 골라줘요. 하루 1번 수집해두면
-// 그날은 계속 재사용되고(sns.dailyTrends에 날짜와 함께 캐시), 다시 수집하기로 새로고침 가능해요.
+// ---------------- 오늘의 추천 (AI 콘텐츠 아이디어 브레인스토밍) ----------------
+// 외부 뉴스 API 없이, Worker가 Gemini에게 "아트아트(artart.today)" 스타일의
+// 흥미로운 예술/디자인/컬처/라이프 콘텐츠 아이디어 10개를 매번 새로 만들어달라고 요청해요.
+// 실시간 뉴스가 아니라 AI가 창작한 소재예요. 하루 1번 뽑아두면 그날은 재사용되고
+// (sns.dailyTrends에 날짜와 함께 캐시), 버튼으로 언제든 다시 뽑을 수 있어요.
 async function fetchDailyTrends() {
   const btn = $("#fetchTrendsBtn");
   const resultEl = $("#trendsResult");
@@ -1114,15 +1115,15 @@ async function fetchDailyTrends() {
   }
   const originalText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = "수집 중... (몇십 초 걸릴 수 있어요)";
-  if (resultEl) resultEl.innerHTML = `<div class="loading">오늘의 이슈를 모으고 있어요...</div>`;
+  btn.textContent = "아이디어 뽑는 중... (몇십 초 걸릴 수 있어요)";
+  if (resultEl) resultEl.innerHTML = `<div class="loading">오늘의 아이디어를 만들고 있어요...</div>`;
   try {
     const corp = await loadModule("corp");
     const businessContext = corp.registeredPurposes && corp.registeredPurposes.length ? corp.registeredPurposes.join(", ") : corp.name || "";
     const res = await fetch(CONFIG.AI_WORKER_URL + "/daily-trends", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ businessContext }),
+      body: JSON.stringify({ businessContext, today: todayStr() }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || data.error) {
@@ -1133,19 +1134,19 @@ async function fetchDailyTrends() {
     await saveModule("sns", sns);
     refreshCurrentTab();
   } catch (e) {
-    if (resultEl) resultEl.innerHTML = `<div class="empty">이슈 수집에 실패했어요: ${esc(e.message)}</div>`;
+    if (resultEl) resultEl.innerHTML = `<div class="empty">아이디어 생성에 실패했어요: ${esc(e.message)}</div>`;
     btn.disabled = false;
     btn.textContent = originalText;
   }
 }
 
 // 추천 카드에서 "이걸로 자동 콘텐츠 만들기"를 누르면, AI 콘텐츠 모달을 열고
-// 주제/플랫폼을 채운 뒤 문구 생성 → 이미지 생성까지 이어서 자동으로 실행해요.
+// 주제/플랫폼/이미지 프롬프트를 채운 뒤 문구 생성 → 이미지 생성까지 이어서 자동으로 실행해요.
 async function useTrendAsContent(trend) {
   openModal(Modules.aiContentForm());
   wireAiContentModal();
-  $("#ai_topic").value = trend.angle ? `${trend.title} — ${trend.angle}` : trend.title;
-  $("#ai_imgPrompt").value = trend.angle || trend.title;
+  $("#ai_topic").value = trend.hook ? `${trend.title} — ${trend.hook}` : trend.title;
+  $("#ai_imgPrompt").value = trend.imagePrompt || trend.hook || trend.title;
   $$("#ai_platform option").forEach((o) => {
     if (o.textContent === trend.platform) $("#ai_platform").value = trend.platform;
   });
