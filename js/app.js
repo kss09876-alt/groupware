@@ -11,6 +11,7 @@ let aiGalleryImages = []; // 생성된 이미지 dataURL 목록
 let aiSelectedImageDataUrl = null; // 대표로 고른 이미지
 let aiVideoBlob = null; // 생성된 슬라이드쇼 동영상
 let aiNarrationBlob = null; // 생성된 릴스 나레이션 음성(mp3)
+let storyboardScenes = []; // 콘티(스토리보드) 장면들: [{sceneNumber, narration, titleText, imageKeyword, mediaDataUrl, composedDataUrl}]
 // "콘텐츠 등록" 폼으로 넘어갈 때까지 잠깐 들고 있는 첨부 미디어 (저장 시 드라이브에 업로드됨)
 let pendingAiImageDataUrl = null;
 let pendingAiVideoBlob = null;
@@ -1167,12 +1168,16 @@ function wireAiContentModal() {
   aiSelectedImageDataUrl = null;
   aiVideoBlob = null;
   aiNarrationBlob = null;
+  storyboardScenes = [];
   $("#genTextBtn").addEventListener("click", generateAiCaption);
   $("#genImageBtn").addEventListener("click", generateAiImage);
   $("#genVideoBtn").addEventListener("click", generateAiVideo);
   $("#genNarrationBtn")?.addEventListener("click", generateAiNarration);
   $("#searchPexelsPhotoBtn")?.addEventListener("click", () => searchPexelsMedia("photos"));
   $("#searchPexelsVideoBtn")?.addEventListener("click", () => searchPexelsMedia("videos"));
+  $("#composeCardBtn")?.addEventListener("click", composeCardImage);
+  $("#genStoryboardBtn")?.addEventListener("click", generateStoryboard);
+  $("#assembleSetBtn")?.addEventListener("click", assembleContentSet);
   $("#ai_imageFile")?.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1362,6 +1367,350 @@ async function selectPexelsItem(item, type, statusEl) {
   } catch (e) {
     statusEl.textContent = "";
     alert("가져오기에 실패했어요: " + e.message);
+  }
+}
+
+function escHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function wrapTextLines(ctx, text, maxWidth, maxLines) {
+  const words = String(text || "").split(" ").filter(Boolean);
+  let line = "";
+  const lines = [];
+  for (const w of words) {
+    const test = line ? line + " " + w : w;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = w;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, maxLines);
+}
+
+// 사진 위에 "지금 99%가 모르는..." 스타일의 카드뉴스 자막(상단 검은 띠 + 큼직한 타이틀)을 합성해요.
+async function composeTitleOverlay(imageDataUrl, titleText, fontSizePx, color) {
+  const img = await loadImageEl(imageDataUrl);
+  const W = 720,
+    H = 900;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const fontSize = Math.max(20, Number(fontSizePx) || 48);
+  const textColor = color || "#ffffff";
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  const maxTextWidth = W - 60;
+  const lineHeight = fontSize * 1.25;
+  const lines = wrapTextLines(ctx, (titleText || "").trim() || "제목", maxTextWidth, 3);
+  const bandPadding = 36;
+  const bandHeight = Math.min(H * 0.6, Math.max(140, lines.length * lineHeight + bandPadding * 2));
+
+  ctx.fillStyle = "#0b0b0b";
+  ctx.fillRect(0, 0, W, bandHeight);
+
+  const photoH = H - bandHeight;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, bandHeight, W, photoH);
+  ctx.clip();
+  const scale = Math.max(W / img.width, photoH / img.height);
+  const dw = img.width * scale,
+    dh = img.height * scale;
+  ctx.drawImage(img, (W - dw) / 2, bandHeight + (photoH - dh) / 2, dw, dh);
+  ctx.restore();
+
+  ctx.fillStyle = textColor;
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  const startY = (bandHeight - lines.length * lineHeight) / 2 + fontSize * 0.85;
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, startY + i * lineHeight));
+
+  return canvas.toDataURL("image/png");
+}
+
+// 지금 선택된 대표 이미지에 타이틀 자막을 얹어서 새 이미지로 갤러리에 추가해요.
+async function composeCardImage() {
+  const statusEl = $("#composeCardStatus");
+  if (!aiSelectedImageDataUrl) {
+    alert("먼저 위에서 이미지를 생성하거나 선택해주세요.");
+    return;
+  }
+  const title = $("#ai_cardTitle")?.value.trim() || $("#ai_topic").value.trim();
+  const fontSize = $("#ai_cardFontSize")?.value || 48;
+  const color = $("#ai_cardColor")?.value || "#ffffff";
+  statusEl.textContent = "합성 중...";
+  try {
+    const composed = await composeTitleOverlay(aiSelectedImageDataUrl, title, fontSize, color);
+    aiGalleryImages.push(composed);
+    aiSelectedImageDataUrl = composed;
+    renderAiGallery();
+    statusEl.textContent = "완료! 갤러리에 추가됐어요.";
+  } catch (e) {
+    statusEl.textContent = "";
+    alert("합성에 실패했어요: " + e.message);
+  }
+}
+
+// 스크립트(또는 주제)를 AI로 장면별 콘티로 나눠요. 각 장면은 나레이션 + 화면 자막 + 이미지 검색용 키워드로 구성돼요.
+async function generateStoryboard() {
+  const btn = $("#genStoryboardBtn");
+  const statusEl = $("#storyboardStatus");
+  const topic = $("#ai_topic").value.trim();
+  const script = $("#ai_script")?.value.trim() || "";
+  if (!topic && !script) {
+    alert("주제나 스크립트를 먼저 입력해주세요.");
+    return;
+  }
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = "콘티 만드는 중...";
+  try {
+    const sceneCount = $("#ai_sceneCount")?.value || 5;
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-storyboard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, script, sceneCount }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.error) {
+      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    }
+    storyboardScenes = (data.scenes || []).map((s) => ({ ...s, mediaDataUrl: null, composedDataUrl: null }));
+    renderStoryboard();
+    const row = $("#storyboardAssembleRow");
+    if (row) row.style.display = "flex";
+    statusEl.textContent = `${storyboardScenes.length}개 장면을 만들었어요. 각 장면마다 이미지를 골라주세요.`;
+  } catch (e) {
+    statusEl.textContent = "";
+    alert("콘티 생성에 실패했어요: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderStoryboard() {
+  const el = $("#storyboardScenes");
+  if (!el) return;
+  el.innerHTML = storyboardScenes
+    .map(
+      (s, i) => `
+    <div class="storyboard-scene" data-scene-idx="${i}">
+      <div class="storyboard-scene-head">#${s.sceneNumber}</div>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--muted); font-weight:600;">
+        나레이션
+        <textarea rows="2" data-scene-field="narration" data-scene-idx="${i}">${escHtml(s.narration)}</textarea>
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--muted); font-weight:600; margin-top:6px;">
+        화면 자막(타이틀)
+        <input data-scene-field="titleText" data-scene-idx="${i}" value="${escHtml(s.titleText)}">
+      </label>
+      <p class="hint" style="margin:6px 0;">🔎 ${escHtml(s.imageKeyword)}</p>
+      <div class="modal-actions" style="justify-content:flex-start;">
+        <button class="btn btn-secondary btn-tiny" data-scene-ai="${i}">🎨 AI 이미지</button>
+        <button class="btn btn-secondary btn-tiny" data-scene-pexels="${i}">📷 Pexels 추천</button>
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 업로드<input type="file" accept="image/*" data-scene-upload="${i}" style="display:none;"></label>
+        <span class="muted" data-scene-status="${i}"></span>
+      </div>
+      <div class="ai-image-gallery" data-scene-options="${i}"></div>
+      <div data-scene-preview="${i}"></div>
+    </div>`
+    )
+    .join("");
+
+  $$("[data-scene-field]", el).forEach((f) =>
+    f.addEventListener("input", () => {
+      const i = Number(f.dataset.sceneIdx);
+      storyboardScenes[i][f.dataset.sceneField] = f.value;
+    })
+  );
+  $$("[data-scene-ai]", el).forEach((b) => b.addEventListener("click", () => sceneGenerateAiImage(Number(b.dataset.sceneAi))));
+  $$("[data-scene-pexels]", el).forEach((b) => b.addEventListener("click", () => sceneSearchPexels(Number(b.dataset.scenePexels))));
+  $$("[data-scene-upload]", el).forEach((inp) =>
+    inp.addEventListener("change", async (e) => {
+      const i = Number(inp.dataset.sceneUpload);
+      const file = e.target.files[0];
+      if (!file) return;
+      const dataUrl = await fileToDataUrl(file);
+      await sceneSetMedia(i, dataUrl);
+    })
+  );
+}
+
+// 선택된 원본 이미지에 그 장면의 타이틀 자막을 입혀서 미리보기와 상태를 갱신해요.
+async function sceneSetMedia(i, rawDataUrl) {
+  const statusEl = $(`[data-scene-status="${i}"]`);
+  if (statusEl) statusEl.textContent = "자막 합성 중...";
+  try {
+    const fontSize = $("#ai_titleFontSize")?.value || 48;
+    const composed = await composeTitleOverlay(rawDataUrl, storyboardScenes[i].titleText, fontSize, "#ffffff");
+    storyboardScenes[i].mediaDataUrl = rawDataUrl;
+    storyboardScenes[i].composedDataUrl = composed;
+    const previewEl = $(`[data-scene-preview="${i}"]`);
+    if (previewEl) previewEl.innerHTML = `<img src="${composed}" style="max-width:160px; border-radius:8px; margin-top:6px;">`;
+    if (statusEl) statusEl.textContent = "완료";
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "";
+    alert("이미지 합성에 실패했어요: " + e.message);
+  }
+}
+
+async function sceneGenerateAiImage(i) {
+  const statusEl = $(`[data-scene-status="${i}"]`);
+  if (statusEl) statusEl.textContent = "생성 중...";
+  try {
+    const prompt = storyboardScenes[i].imageKeyword || storyboardScenes[i].titleText || "";
+    let dataUrl = null;
+    if (CONFIG.AI_WORKER_URL) {
+      try {
+        const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.image) dataUrl = `data:${data.mimeType || "image/png"};base64,${data.image}`;
+      } catch (e) {
+        // Worker 실패는 조용히 무시하고 아래 무료 대체 서비스로 넘어가요.
+      }
+    }
+    if (!dataUrl) {
+      const seed = Math.floor(Math.random() * 1e9);
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("이미지 생성 서버 응답 오류 (" + res.status + ")");
+      const blob = await res.blob();
+      dataUrl = await fileToDataUrl(blob);
+    }
+    await sceneSetMedia(i, dataUrl);
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "";
+    alert("장면 이미지 생성에 실패했어요: " + e.message);
+  }
+}
+
+async function sceneSearchPexels(i) {
+  const statusEl = $(`[data-scene-status="${i}"]`);
+  const optionsEl = $(`[data-scene-options="${i}"]`);
+  const query = storyboardScenes[i].imageKeyword || storyboardScenes[i].titleText || "";
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  if (statusEl) statusEl.textContent = "검색 중...";
+  if (optionsEl) optionsEl.innerHTML = "";
+  try {
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/search-media", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, type: "photos", perPage: 6 }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.error) {
+      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    }
+    const items = data.items || [];
+    if (!items.length) {
+      if (statusEl) statusEl.textContent = "검색 결과가 없어요.";
+      return;
+    }
+    if (statusEl) statusEl.textContent = "클릭해서 선택하세요.";
+    if (optionsEl) {
+      optionsEl.innerHTML = items
+        .map((it, j) => `<div class="ai-thumb" data-scene-pexels-item="${j}"><img src="${it.thumb}" alt="Pexels 사진"></div>`)
+        .join("");
+      $$("[data-scene-pexels-item]", optionsEl).forEach((elm) =>
+        elm.addEventListener("click", async () => {
+          const item = items[Number(elm.dataset.scenePexelsItem)];
+          if (statusEl) statusEl.textContent = "가져오는 중...";
+          try {
+            const r = await fetch(item.imageUrl);
+            const blob = await r.blob();
+            const dataUrl = await fileToDataUrl(blob);
+            await sceneSetMedia(i, dataUrl);
+            if (statusEl) statusEl.textContent = `가져왔어요! (촬영: ${item.credit || "Pexels"})`;
+          } catch (e) {
+            if (statusEl) statusEl.textContent = "";
+            alert("가져오기에 실패했어요: " + e.message);
+          }
+        })
+      );
+    }
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "";
+    alert("Pexels 검색에 실패했어요: " + e.message);
+  }
+}
+
+// 모든 장면에 이미지가 준비되면, 그 장면 이미지들로 "일반 게시물용 대표 이미지 + 릴스 영상"을
+// 한 세트로 자동 완성해요 (기존 이미지 갤러리/나레이션/슬라이드쇼 로직을 그대로 재사용해요).
+async function assembleContentSet() {
+  const btn = $("#assembleSetBtn");
+  const statusEl = $("#assembleSetStatus");
+  if (!storyboardScenes.length) return;
+  const missing = storyboardScenes.filter((s) => !s.composedDataUrl);
+  if (missing.length) {
+    alert(`아직 이미지를 고르지 않은 장면이 ${missing.length}개 있어요. 모든 장면에 이미지를 먼저 골라주세요.`);
+    return;
+  }
+  btn.disabled = true;
+  try {
+    statusEl.textContent = "게시물용 대표 이미지 설정 중...";
+    aiGalleryImages = storyboardScenes.map((s) => s.composedDataUrl);
+    aiSelectedImageDataUrl = aiGalleryImages[0];
+    renderAiGallery();
+
+    if (CONFIG.AI_WORKER_URL) {
+      statusEl.textContent = "나레이션 음성 만드는 중...";
+      const combinedNarration = storyboardScenes
+        .map((s) => s.narration)
+        .join(" ")
+        .trim()
+        .slice(0, 800);
+      if (combinedNarration) {
+        try {
+          const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-speech", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: combinedNarration }),
+          });
+          const data = await res.json().catch(() => null);
+          if (res.ok && data && data.audio) {
+            const byteChars = atob(data.audio);
+            const bytes = new Uint8Array(byteChars.length);
+            for (let k = 0; k < byteChars.length; k++) bytes[k] = byteChars.charCodeAt(k);
+            aiNarrationBlob = new Blob([bytes], { type: data.mimeType || "audio/mpeg" });
+            const url = URL.createObjectURL(aiNarrationBlob);
+            const preview = $("#aiNarrationPreview");
+            if (preview) preview.innerHTML = `<audio src="${url}" controls style="margin-top:8px;"></audio>`;
+            if ($("#aiTextResult")) $("#aiTextResult").style.display = "block";
+          }
+        } catch (e) {
+          // 나레이션 실패해도 슬라이드쇼는 음성 없이 계속 만들어요.
+        }
+      }
+    }
+
+    statusEl.textContent = "릴스 영상 만드는 중...";
+    const caption = ($("#ai_caption")?.value || $("#ai_topic").value || "").trim();
+    aiVideoBlob = await buildSlideshowVideo(aiGalleryImages.slice(0, 8), caption, aiNarrationBlob);
+    const url = URL.createObjectURL(aiVideoBlob);
+    const preview = $("#aiVideoPreview");
+    if (preview) preview.innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
+
+    statusEl.textContent = "완성했어요! 게시물용 대표 이미지와 릴스 영상이 모두 준비됐어요. 아래 '이 내용으로 콘텐츠 등록하기'를 눌러주세요.";
+  } catch (e) {
+    statusEl.textContent = "";
+    alert("세트 만들기에 실패했어요: " + e.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 

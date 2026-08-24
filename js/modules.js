@@ -822,6 +822,21 @@ const Modules = {
       </div>
       <div id="aiImageGallery" class="ai-image-gallery"></div>
 
+      <div style="margin-top:14px; padding:12px; border:1px solid var(--border, #e5e5ea); border-radius:10px; background:#fafafc;">
+        <p class="hint" style="margin:0 0 8px;">🖋 위에서 고른 이미지 위에 큼직한 타이틀 자막을 얹어서 카드뉴스/썸네일 스타일로 만들 수 있어요.</p>
+        <div class="form-grid">
+          <label>타이틀 문구 <input id="ai_cardTitle" placeholder="예: 지금 99%가 모르는 이야기"></label>
+        </div>
+        <div class="modal-actions" style="justify-content:flex-start; align-items:center; gap:10px; flex-wrap:wrap;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">글자 크기 <input type="range" id="ai_cardFontSize" min="28" max="72" value="48"></label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">글자색
+            <select id="ai_cardColor"><option value="#ffffff">흰색</option><option value="#ffe600">노란색</option><option value="#111111">검정</option></select>
+          </label>
+          <button class="btn btn-secondary btn-tiny" id="composeCardBtn">🖼 타이틀 합성해서 갤러리에 추가</button>
+          <span id="composeCardStatus" class="muted"></span>
+        </div>
+      </div>
+
       <p class="hint" style="margin-top:14px;">📷 Pexels에서 실제 사진/영상을 무료로 검색해서 가져올 수도 있어요(저작권 걱정 없어요).</p>
       <div class="form-grid">
         <label>검색어 (비워두면 위 주제를 사용해요) <input id="ai_pexelsQuery" placeholder="예: 카페 인테리어, 커피"></label>
@@ -833,7 +848,27 @@ const Modules = {
       </div>
       <div id="pexelsResults" class="ai-image-gallery"></div>
 
-      <p class="hint" style="margin-top:14px;">🎬 영상은 AI로 만들지 않고, 직접 촬영/편집한 사진이나 영상을 아래에서 첨부해서 써도 돼요.</p>
+      <div style="margin-top:16px; padding:12px; border:1px solid var(--border, #e5e5ea); border-radius:10px;">
+        <p class="hint" style="margin:0 0 8px;">🎬 스크립트(또는 위 주제)를 장면별 콘티로 나누고, 각 장면마다 어울리는 이미지를 Pexels 추천/AI 생성/직접 업로드 중에서 골라 타이틀 자막까지 입힌 다음, "일반 게시물용 대표 이미지 + 릴스 영상"을 한 세트로 자동 완성할 수 있어요.</p>
+        <div class="form-grid">
+          <label>스크립트 (비워두면 위 주제로 새로 만들어요) <textarea id="ai_script" rows="3" placeholder="이미 써둔 대본이 있다면 붙여넣으세요"></textarea></label>
+          <label>장면 수
+            <select id="ai_sceneCount"><option value="3">3장면</option><option value="4">4장면</option><option value="5" selected>5장면</option><option value="6">6장면</option><option value="8">8장면</option></select>
+          </label>
+        </div>
+        <div class="modal-actions" style="justify-content:flex-start;">
+          <button class="btn btn-secondary btn-tiny" id="genStoryboardBtn">📝 콘티 만들기</button>
+          <span id="storyboardStatus" class="muted"></span>
+        </div>
+        <div id="storyboardScenes"></div>
+        <div class="modal-actions" id="storyboardAssembleRow" style="justify-content:flex-start; margin-top:6px; display:none; align-items:center; gap:10px; flex-wrap:wrap;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">장면 자막 글자 크기 <input type="range" id="ai_titleFontSize" min="28" max="72" value="48"></label>
+          <button class="btn btn-primary btn-tiny" id="assembleSetBtn">🎬📸 릴스+게시물 세트로 완성하기</button>
+          <span id="assembleSetStatus" class="muted"></span>
+        </div>
+      </div>
+
+      <p class="hint" style="margin-top:14px;">🎬 위 콘티 기능 대신, 직접 촬영/편집한 사진이나 영상을 아래에서 첨부해서 써도 돼요.</p>
       <div class="modal-actions" style="justify-content:flex-start;">
         <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 내 사진 첨부<input type="file" id="ai_imageFile" accept="image/*" style="display:none;"></label>
         <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 내 영상 첨부<input type="file" id="ai_videoFile" accept="video/*" style="display:none;"></label>
