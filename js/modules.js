@@ -617,7 +617,7 @@ const Modules = {
       .slice(0, 5);
     return `
       <div class="toolbar"><button class="btn btn-secondary" id="aiContentBtn">🤖 AI로 콘텐츠 만들기</button><button class="btn btn-primary" id="newSnsBtn">+ 콘텐츠 등록</button></div>
-      <p class="hint">✅ 예약 자동화: "자동 게시 처리"를 켜고 승인하면, 예정 시각이 되었을 때 앱이 열려있는 시점에 자동으로 "게시완료"로 바뀌고 캘린더에도 자동 등록돼요. (브라우저가 실제로 열려있어야 동작해요 — 완전한 백그라운드 자동 게시는 별도 서버 연동이 필요해요.)<br>🤖 AI로 콘텐츠 만들기: 주제만 입력하면 문구(무료 Gemini)와 이미지(무료 Pollinations)를 만들어주고, 이미지 2장 이상이면 간단한 슬라이드쇼 동영상도 만들 수 있어요.<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 → 예약 자동화 워크플로우까지 지원해요.</p>
+      <p class="hint">✅ 예약 자동화: "자동 게시 처리"를 켜고 승인하면, 예정 시각이 되었을 때 앱이 열려있는 시점에 자동으로 "게시완료"로 바뀌고 캘린더에도 자동 등록돼요. (브라우저가 실제로 열려있어야 동작해요 — 완전한 백그라운드 자동 게시는 별도 서버 연동이 필요해요.)<br>🤖 AI로 콘텐츠 만들기: 주제만 입력하면 문구(무료 Gemini), 이미지(무료 Workers AI/Pollinations), 릴스 나레이션 음성(무료 Workers AI TTS)까지 만들어주고, 이미지 2장 이상이면 나레이션 길이에 맞춘 슬라이드쇼 동영상도 만들 수 있어요. 직접 찍은 사진/영상을 대신 첨부할 수도 있어요.<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 → 예약 자동화 워크플로우까지 지원해요.</p>
       ${upcoming.length ? `
       <div class="panel" style="margin-bottom:16px;">
         <h3>🤖 자동 게시 예정</h3>
@@ -806,6 +806,11 @@ const Modules = {
           <textarea id="ai_caption" rows="4"></textarea>
         </label>
         <div id="ai_hashtags" class="hint" style="margin-top:6px;"></div>
+        <div class="modal-actions" style="justify-content:flex-start; margin-top:8px;">
+          <button class="btn btn-secondary btn-tiny" id="genNarrationBtn">🔊 릴스 나레이션 음성 생성</button>
+          <span id="genNarrationStatus" class="muted"></span>
+        </div>
+        <div id="aiNarrationPreview"></div>
       </div>
 
       <div class="form-grid" style="margin-top:16px;">
@@ -828,6 +833,7 @@ const Modules = {
         <button class="btn btn-secondary btn-tiny" id="genVideoBtn" disabled>🎬 슬라이드쇼 동영상 만들기 (이미지 2장 이상 필요)</button>
         <span id="genVideoStatus" class="muted"></span>
       </div>
+      <p class="hint">위에서 나레이션 음성을 먼저 만들어두면, 슬라이드쇼 동영상을 만들 때 자동으로 음성이 입혀지고 길이도 나레이션에 맞춰져요.</p>
       <div id="aiVideoPreview"></div>
 
       <div class="modal-actions">

@@ -10,6 +10,7 @@ const cache = {}; // 모듈별 로드된 데이터 캐시 (탭 전환 시 재사
 let aiGalleryImages = []; // 생성된 이미지 dataURL 목록
 let aiSelectedImageDataUrl = null; // 대표로 고른 이미지
 let aiVideoBlob = null; // 생성된 슬라이드쇼 동영상
+let aiNarrationBlob = null; // 생성된 릴스 나레이션 음성(mp3)
 // "콘텐츠 등록" 폼으로 넘어갈 때까지 잠깐 들고 있는 첨부 미디어 (저장 시 드라이브에 업로드됨)
 let pendingAiImageDataUrl = null;
 let pendingAiVideoBlob = null;
@@ -1165,9 +1166,11 @@ function wireAiContentModal() {
   aiGalleryImages = [];
   aiSelectedImageDataUrl = null;
   aiVideoBlob = null;
+  aiNarrationBlob = null;
   $("#genTextBtn").addEventListener("click", generateAiCaption);
   $("#genImageBtn").addEventListener("click", generateAiImage);
   $("#genVideoBtn").addEventListener("click", generateAiVideo);
+  $("#genNarrationBtn")?.addEventListener("click", generateAiNarration);
   $("#ai_imageFile")?.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1236,6 +1239,49 @@ async function generateAiCaption() {
   } finally {
     btn.disabled = false;
     btn.textContent = "✍️ 문구 생성";
+  }
+}
+
+// 릴스 나레이션 음성 생성 — Cloudflare Workers AI(MeloTTS, 무료)를 시도해요.
+// 이 Worker에 Workers AI 바인딩이 없거나 한국어를 지원하지 않으면 실패할 수 있는데,
+// 그래도 문구/이미지 생성이나 동영상 만들기는 그대로 계속 쓸 수 있게 조용히 안내만 해요.
+async function generateAiNarration() {
+  const btn = $("#genNarrationBtn");
+  const statusEl = $("#genNarrationStatus");
+  const text = ($("#ai_caption")?.value || $("#ai_topic").value || "").trim();
+  if (!text) {
+    alert("먼저 문구를 생성하거나 입력해주세요.");
+    return;
+  }
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = "음성 만드는 중...";
+  try {
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-speech", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.slice(0, 800), lang: "kr" }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.error) {
+      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    }
+    const byteChars = atob(data.audio);
+    const bytes = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+    aiNarrationBlob = new Blob([bytes], { type: data.mimeType || "audio/mpeg" });
+    const url = URL.createObjectURL(aiNarrationBlob);
+    $("#aiNarrationPreview").innerHTML = `<audio src="${url}" controls style="margin-top:8px;"></audio>`;
+    statusEl.textContent = "완성했어요!";
+  } catch (e) {
+    statusEl.textContent = "";
+    aiNarrationBlob = null;
+    alert("나레이션 음성 생성에 실패했어요: " + e.message + "\n(한국어 음성이 아직 지원되지 않을 수 있어요. 음성 없이 계속 진행하셔도 돼요.)");
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -1320,13 +1366,15 @@ async function generateAiVideo() {
   const statusEl = $("#genVideoStatus");
   if (aiGalleryImages.length < 2) return;
   btn.disabled = true;
-  statusEl.textContent = "동영상 만드는 중... (이미지당 약 2초씩 걸려요)";
+  statusEl.textContent = aiNarrationBlob
+    ? "동영상 만드는 중... (나레이션 길이에 맞춰요)"
+    : "동영상 만드는 중... (이미지당 약 2초씩 걸려요)";
   try {
     const caption = ($("#ai_caption")?.value || $("#ai_topic").value || "").trim();
-    aiVideoBlob = await buildSlideshowVideo(aiGalleryImages.slice(0, 5), caption);
+    aiVideoBlob = await buildSlideshowVideo(aiGalleryImages.slice(0, 5), caption, aiNarrationBlob);
     const url = URL.createObjectURL(aiVideoBlob);
     $("#aiVideoPreview").innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
-    statusEl.textContent = "완성했어요! 아래에서 미리 확인해보세요.";
+    statusEl.textContent = aiNarrationBlob ? "완성했어요! 음성이 입혀졌어요." : "완성했어요! 아래에서 미리 확인해보세요.";
   } catch (e) {
     statusEl.textContent = "";
     alert("동영상 생성에 실패했어요: " + e.message + " (일부 브라우저에서는 지원하지 않을 수 있어요)");
@@ -1373,16 +1421,51 @@ function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
 }
 
 // 이미지들을 캔버스에 순서대로 그려서 녹화한 간단한 슬라이드쇼 동영상(webm)을 만들어요.
-async function buildSlideshowVideo(dataUrls, captionText) {
+// audioBlob이 있으면(릴스 나레이션) 실제로 재생하면서 그 소리를 함께 녹화하고,
+// 전체 길이도 나레이션 길이에 맞춰 이미지 노출 시간을 자동으로 늘려요.
+async function buildSlideshowVideo(dataUrls, captionText, audioBlob) {
   const W = 720,
     H = 720;
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
-  const stream = canvas.captureStream(15);
-  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9") ? "video/webm;codecs=vp9" : "video/webm";
-  const recorder = new MediaRecorder(stream, { mimeType });
+  const videoStream = canvas.captureStream(15);
+
+  let combinedStream = videoStream;
+  let audioEl = null;
+  let totalMs = dataUrls.length * 2200;
+
+  if (audioBlob) {
+    audioEl = new Audio(URL.createObjectURL(audioBlob));
+    try {
+      await new Promise((resolve, reject) => {
+        audioEl.addEventListener("loadedmetadata", resolve, { once: true });
+        audioEl.addEventListener("error", reject, { once: true });
+        audioEl.load();
+      });
+      if (audioEl.duration && isFinite(audioEl.duration)) {
+        totalMs = Math.min(Math.max(audioEl.duration * 1000 + 300, dataUrls.length * 1200), 60000);
+      }
+      const AudioContextCls = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioContextCls();
+      const source = audioCtx.createMediaElementSource(audioEl);
+      const dest = audioCtx.createMediaStreamDestination();
+      source.connect(dest);
+      combinedStream = new MediaStream([...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    } catch (e) {
+      // 오디오 트랙 준비에 실패하면 음성 없이 화면 녹화만 계속해요.
+      combinedStream = videoStream;
+      audioEl = null;
+    }
+  }
+
+  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+    ? "video/webm;codecs=vp9,opus"
+    : MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+    ? "video/webm;codecs=vp9"
+    : "video/webm";
+  const recorder = new MediaRecorder(combinedStream, { mimeType });
   const chunks = [];
   recorder.ondataavailable = (e) => {
     if (e.data.size) chunks.push(e.data);
@@ -1391,9 +1474,16 @@ async function buildSlideshowVideo(dataUrls, captionText) {
     recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
   });
   recorder.start();
+  if (audioEl) {
+    try {
+      await audioEl.play();
+    } catch (e) {
+      // 자동재생이 막히면 화면만 녹화되고 음성은 빠질 수 있어요.
+    }
+  }
 
   const imgs = await Promise.all(dataUrls.map(loadImageEl));
-  const perImageMs = 2200;
+  const perImageMs = Math.max(1200, totalMs / imgs.length);
   for (const img of imgs) {
     const start = Date.now();
     while (Date.now() - start < perImageMs) {
@@ -1414,6 +1504,7 @@ async function buildSlideshowVideo(dataUrls, captionText) {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
+  if (audioEl) audioEl.pause();
   recorder.stop();
   return done;
 }
