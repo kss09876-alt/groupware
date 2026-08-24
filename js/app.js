@@ -1171,6 +1171,8 @@ function wireAiContentModal() {
   $("#genImageBtn").addEventListener("click", generateAiImage);
   $("#genVideoBtn").addEventListener("click", generateAiVideo);
   $("#genNarrationBtn")?.addEventListener("click", generateAiNarration);
+  $("#searchPexelsPhotoBtn")?.addEventListener("click", () => searchPexelsMedia("photos"));
+  $("#searchPexelsVideoBtn")?.addEventListener("click", () => searchPexelsMedia("videos"));
   $("#ai_imageFile")?.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1285,6 +1287,81 @@ async function generateAiNarration() {
     alert("나레이션 음성 생성에 실패했어요: " + e.message + "\n(음성 없이 계속 진행하셔도 돼요.)");
   } finally {
     btn.disabled = false;
+  }
+}
+
+// Pexels에서 실제 사진/영상을 검색해서 가져와요 — 완전 무료 스톡 사진/영상 서비스라
+// AI 생성 이미지보다 실사 느낌이 필요할 때, 또는 저작권 걱정 없는 소스가 필요할 때 유용해요.
+async function searchPexelsMedia(type) {
+  const statusEl = $("#pexelsStatus");
+  const resultsEl = $("#pexelsResults");
+  const query = ($("#ai_pexelsQuery")?.value || $("#ai_imgPrompt")?.value || $("#ai_topic")?.value || "").trim();
+  if (!query) {
+    alert("검색어나 주제를 먼저 입력해주세요.");
+    return;
+  }
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  statusEl.textContent = "검색 중...";
+  resultsEl.innerHTML = "";
+  try {
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/search-media", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, type, perPage: 8 }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.error) {
+      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    }
+    const items = data.items || [];
+    if (!items.length) {
+      statusEl.textContent = "검색 결과가 없어요.";
+      return;
+    }
+    statusEl.textContent = `${items.length}개 찾았어요. 클릭해서 선택하세요.`;
+    resultsEl.innerHTML = items
+      .map(
+        (it, i) => `
+      <div class="ai-thumb" data-pexels-item="${i}">
+        <img src="${it.thumb}" alt="Pexels ${type === "videos" ? "영상" : "사진"}">
+        ${type === "videos" ? `<span class="ai-thumb-badge">${Math.round(it.duration || 0)}초</span>` : ""}
+      </div>`
+      )
+      .join("");
+    $$("[data-pexels-item]", resultsEl).forEach((el) =>
+      el.addEventListener("click", () => selectPexelsItem(items[Number(el.dataset.pexelsItem)], type, statusEl))
+    );
+  } catch (e) {
+    statusEl.textContent = "";
+    alert("Pexels 검색에 실패했어요: " + e.message);
+  }
+}
+
+async function selectPexelsItem(item, type, statusEl) {
+  statusEl.textContent = "가져오는 중...";
+  try {
+    if (type === "videos") {
+      const res = await fetch(item.videoUrl);
+      const blob = await res.blob();
+      aiVideoBlob = blob;
+      const url = URL.createObjectURL(blob);
+      $("#aiVideoPreview").innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
+      statusEl.textContent = `가져왔어요! (촬영: ${item.credit || "Pexels"})`;
+    } else {
+      const res = await fetch(item.imageUrl);
+      const blob = await res.blob();
+      const dataUrl = await fileToDataUrl(blob);
+      aiGalleryImages = [dataUrl, ...aiGalleryImages];
+      aiSelectedImageDataUrl = dataUrl;
+      renderAiGallery();
+      statusEl.textContent = `가져왔어요! (촬영: ${item.credit || "Pexels"})`;
+    }
+  } catch (e) {
+    statusEl.textContent = "";
+    alert("가져오기에 실패했어요: " + e.message);
   }
 }
 

@@ -822,6 +822,17 @@ const Modules = {
       </div>
       <div id="aiImageGallery" class="ai-image-gallery"></div>
 
+      <p class="hint" style="margin-top:14px;">📷 Pexels에서 실제 사진/영상을 무료로 검색해서 가져올 수도 있어요(저작권 걱정 없어요).</p>
+      <div class="form-grid">
+        <label>검색어 (비워두면 위 주제를 사용해요) <input id="ai_pexelsQuery" placeholder="예: 카페 인테리어, 커피"></label>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start;">
+        <button class="btn btn-secondary btn-tiny" id="searchPexelsPhotoBtn">🖼 Pexels 사진 검색</button>
+        <button class="btn btn-secondary btn-tiny" id="searchPexelsVideoBtn">🎬 Pexels 영상 검색</button>
+        <span id="pexelsStatus" class="muted"></span>
+      </div>
+      <div id="pexelsResults" class="ai-image-gallery"></div>
+
       <p class="hint" style="margin-top:14px;">🎬 영상은 AI로 만들지 않고, 직접 촬영/편집한 사진이나 영상을 아래에서 첨부해서 써도 돼요.</p>
       <div class="modal-actions" style="justify-content:flex-start;">
         <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 내 사진 첨부<input type="file" id="ai_imageFile" accept="image/*" style="display:none;"></label>
