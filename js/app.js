@@ -12,6 +12,10 @@ let aiSelectedImageDataUrl = null; // 대표로 고른 이미지
 let aiVideoBlob = null; // 생성된 슬라이드쇼 동영상
 let aiNarrationBlob = null; // 생성된 릴스 나레이션 음성(mp3)
 let storyboardScenes = []; // 콘티(스토리보드) 장면들: [{sceneNumber, narration, titleText, imageKeyword, mediaDataUrl, composedDataUrl}]
+
+// 콘텐츠 스튜디오(팝업 대신 전용 페이지) 상태 — 지금 편집 중인 SNS 초안의 id와 자동저장 타이머
+let studioDraftId = null;
+let studioSaveTimer = null;
 // "콘텐츠 등록" 폼으로 넘어갈 때까지 잠깐 들고 있는 첨부 미디어 (저장 시 드라이브에 업로드됨)
 let pendingAiImageDataUrl = null;
 let pendingAiVideoBlob = null;
@@ -184,6 +188,9 @@ const ctx = {
   },
   get snsSubTab() {
     return snsSubTab;
+  },
+  get studioDraftId() {
+    return studioDraftId;
   },
   load: loadModule,
 };
@@ -905,6 +912,9 @@ function bindTabEvents(tab) {
   }
 
   if (tab === "sns") {
+    if (snsSubTab === "studio") {
+      wireContentStudio();
+    }
     $("#newSnsBtn")?.addEventListener("click", () => {
       openModal(Modules.snsForm());
       $("#saveSnsBtn").addEventListener("click", async () => {
@@ -937,10 +947,15 @@ function bindTabEvents(tab) {
         }
       });
     });
-    $("#aiContentBtn")?.addEventListener("click", () => {
-      openModal(Modules.aiContentForm());
-      wireAiContentModal();
-    });
+    $("#aiContentBtn")?.addEventListener("click", () => enterContentStudio(null));
+    $$("[data-sns-continue]").forEach((b) =>
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        studioDraftId = b.dataset.snsContinue;
+        snsSubTab = "studio";
+        refreshCurrentTab();
+      })
+    );
     $$("[data-sns]").forEach((row) =>
       row.addEventListener("click", (e) => {
         if (e.target.closest("button")) return;
@@ -1143,15 +1158,15 @@ async function fetchDailyTrends() {
   }
 }
 
-// 추천 카드에서 "이걸로 자동 콘텐츠 만들기"를 누르면, AI 콘텐츠 모달을 열고
-// 주제/플랫폼/이미지 프롬프트를 채운 뒤 문구 생성 → 이미지 생성까지 이어서 자동으로 실행해요.
+// 추천 카드에서 "이걸로 자동 콘텐츠 만들기"를 누르면, 콘텐츠 스튜디오 페이지로 넘어가서
+// 주제/플랫폼/이미지 프롬프트를 채운 초안을 바로 만들고(콘텐츠 운영 목록에 즉시 나타나요),
+// 이어서 문구 생성 → 이미지 생성까지 자동으로 실행해요.
 async function useTrendAsContent(trend) {
-  openModal(Modules.aiContentForm());
-  wireAiContentModal();
-  $("#ai_topic").value = trend.hook ? `${trend.title} — ${trend.hook}` : trend.title;
-  $("#ai_imgPrompt").value = trend.imagePrompt || trend.hook || trend.title;
-  $$("#ai_platform option").forEach((o) => {
-    if (o.textContent === trend.platform) $("#ai_platform").value = trend.platform;
+  await enterContentStudio({
+    title: trend.title,
+    topic: trend.hook ? `${trend.title} — ${trend.hook}` : trend.title,
+    platform: trend.platform,
+    imagePrompt: trend.imagePrompt || trend.hook || trend.title,
   });
   await generateAiCaption();
   await generateAiImage();
@@ -1163,12 +1178,83 @@ async function useTrendAsContent(trend) {
 // 동영상: 생성된 이미지들을 캔버스에 그려서 MediaRecorder로 녹화하는 "슬라이드쇼" 방식
 //         (진짜 AI 영상생성 API 중엔 상시 무료로 쓸 만한 게 마땅치 않아서, 100% 무료로
 //         바로 되는 대안으로 구현했어요. 나중에 원하시면 실제 AI 영상 API로 교체 가능해요.)
-function wireAiContentModal() {
+// ---------------- 콘텐츠 스튜디오 ----------------
+// 팝업창 대신 전용 페이지에서 AI 콘텐츠를 만들어요. 페이지에 들어가는 순간 "작성중" 상태의
+// 초안을 드라이브에 바로 저장해서 "콘텐츠 운영" 목록에 즉시 나타나고, 이후 입력/생성한 내용도
+// 자동으로(디바운스해서) 계속 저장돼요. 언제든 나갔다가 "✏️ 이어서 작성"으로 돌아올 수 있어요.
+async function enterContentStudio(prefill) {
+  const data = await loadModule("sns");
+  const item = {
+    id: uid(),
+    platform: (prefill && prefill.platform) || "인스타그램",
+    title: (prefill && prefill.title) || "(제목없음)",
+    content: "",
+    hashtags: "",
+    topic: (prefill && prefill.topic) || "",
+    tone: (prefill && prefill.tone) || "",
+    imagePrompt: (prefill && prefill.imagePrompt) || "",
+    script: "",
+    assignee: "",
+    date: todayStr(),
+    time: "09:00",
+    scheduledAt: `${todayStr()}T09:00`,
+    autoPublish: true,
+    calendarEventId: null,
+    approver: "",
+    status: "작성중",
+    createdAt: nowStr(),
+  };
+  data.items.push(item);
+  await saveModule("sns", data);
+  studioDraftId = item.id;
+  snsSubTab = "studio";
+  await refreshCurrentTab();
+}
+
+function wireContentStudio() {
   aiGalleryImages = [];
   aiSelectedImageDataUrl = null;
   aiVideoBlob = null;
   aiNarrationBlob = null;
   storyboardScenes = [];
+  $("#studioBackBtn")?.addEventListener("click", async () => {
+    await saveStudioDraftNow();
+    snsSubTab = "content";
+    refreshCurrentTab();
+  });
+  $("#studioDeleteBtn")?.addEventListener("click", async () => {
+    if (!confirm("이 초안을 삭제할까요? 되돌릴 수 없어요.")) return;
+    const data = await loadModule("sns", true);
+    data.items = data.items.filter((s) => s.id !== studioDraftId);
+    await saveModule("sns", data);
+    studioDraftId = null;
+    snsSubTab = "content";
+    refreshCurrentTab();
+  });
+  $("#studioSubmitBtn")?.addEventListener("click", async () => {
+    await saveStudioDraftNow();
+    const data = await loadModule("sns", true);
+    const item = data.items.find((s) => s.id === studioDraftId);
+    if (!item) return;
+    if (!item.approver) {
+      alert("승인자 이메일을 입력해주세요.");
+      return;
+    }
+    item.status = "검토중";
+    await saveModule("sns", data);
+    studioDraftId = null;
+    snsSubTab = "content";
+    refreshCurrentTab();
+  });
+
+  ["ai_platform", "ai_title", "ai_assignee", "ai_date", "ai_time", "ai_autoPublish", "ai_approver", "ai_topic", "ai_tone", "ai_imgPrompt", "ai_script", "ai_caption"].forEach(
+    (id) => {
+      const el = $("#" + id);
+      if (!el) return;
+      el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" || el.type === "date" || el.type === "time" ? "change" : "input", scheduleStudioAutosave);
+    }
+  );
+
   $("#genTextBtn").addEventListener("click", generateAiCaption);
   $("#genImageBtn").addEventListener("click", generateAiImage);
   $("#genVideoBtn").addEventListener("click", generateAiVideo);
@@ -1187,6 +1273,7 @@ function wireAiContentModal() {
     renderAiGallery();
     const statusEl = $("#aiLocalMediaStatus");
     if (statusEl) statusEl.textContent = `📎 사진 첨부됨: ${file.name}`;
+    syncStudioMedia();
   });
   $("#ai_videoFile")?.addEventListener("change", (e) => {
     const file = e.target.files[0];
@@ -1197,22 +1284,53 @@ function wireAiContentModal() {
     if (preview) preview.innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
     const statusEl = $("#aiLocalMediaStatus");
     if (statusEl) statusEl.textContent = (statusEl.textContent ? statusEl.textContent + " · " : "") + `📎 영상 첨부됨: ${file.name}`;
+    syncStudioMedia();
   });
-  $("#useAiContentBtn").addEventListener("click", () => {
-    const topic = $("#ai_topic").value.trim();
-    const caption = $("#ai_caption")?.value?.trim() || "";
-    const hashtags = $("#ai_hashtags")?.textContent?.trim() || "";
-    const platform = $("#ai_platform").value;
-    pendingAiImageDataUrl = aiSelectedImageDataUrl;
-    pendingAiVideoBlob = aiVideoBlob;
-    closeModal();
-    $("#newSnsBtn").click();
-    $("#f_title").value = topic || "(제목없음)";
-    $("#f_content").value = caption ? caption + (hashtags ? "\n\n" + hashtags : "") : "";
-    $$("#f_platform option").forEach((o) => {
-      if (o.textContent === platform) $("#f_platform").value = platform;
-    });
-  });
+}
+
+// 메타/문구/주제 등 텍스트 필드는 타이핑이 멈추고 나서 잠깐(0.9초) 뒤에 자동 저장돼요
+// (매 키 입력마다 드라이브에 쓰지 않도록 디바운스했어요).
+function scheduleStudioAutosave() {
+  if (!studioDraftId) return;
+  const statusEl = $("#studioSaveStatus");
+  if (statusEl) statusEl.textContent = "저장 대기 중...";
+  clearTimeout(studioSaveTimer);
+  studioSaveTimer = setTimeout(saveStudioDraftNow, 900);
+}
+
+async function saveStudioDraftNow() {
+  if (!studioDraftId) return;
+  const statusEl = $("#studioSaveStatus");
+  try {
+    const data = await loadModule("sns", true);
+    const item = data.items.find((s) => s.id === studioDraftId);
+    if (!item) return;
+    item.platform = $("#ai_platform")?.value || item.platform;
+    item.title = $("#ai_title")?.value.trim() || "(제목없음)";
+    item.assignee = $("#ai_assignee")?.value || "";
+    item.date = $("#ai_date")?.value || item.date;
+    item.time = $("#ai_time")?.value || item.time;
+    item.scheduledAt = `${item.date}T${item.time}`;
+    item.autoPublish = $("#ai_autoPublish") ? $("#ai_autoPublish").checked : item.autoPublish;
+    item.approver = $("#ai_approver")?.value.trim() || "";
+    item.topic = $("#ai_topic")?.value || "";
+    item.tone = $("#ai_tone")?.value || "";
+    item.content = $("#ai_caption")?.value || "";
+    item.hashtags = $("#ai_hashtags")?.textContent || "";
+    item.imagePrompt = $("#ai_imgPrompt")?.value || "";
+    item.script = $("#ai_script")?.value || "";
+    await saveModule("sns", data);
+    if (statusEl) statusEl.textContent = "자동 저장됨 · " + new Date().toLocaleTimeString("ko-KR");
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "저장 실패";
+    console.error("스튜디오 자동 저장 실패", e);
+  }
+}
+
+// 대표 이미지/영상이 바뀔 때마다 드라이브에 실제 파일로 올려서 초안에 바로 붙여줘요.
+function syncStudioMedia() {
+  if (!studioDraftId) return;
+  attachAiMediaToSnsItem(studioDraftId, aiSelectedImageDataUrl, aiVideoBlob);
 }
 
 async function generateAiCaption() {
@@ -1241,6 +1359,7 @@ async function generateAiCaption() {
     $("#aiTextResult").style.display = "block";
     $("#ai_caption").value = data.caption || "";
     $("#ai_hashtags").textContent = (data.hashtags || []).map((h) => (h.startsWith("#") ? h : "#" + h)).join(" ");
+    scheduleStudioAutosave();
   } catch (e) {
     alert("문구 생성에 실패했어요: " + e.message);
   } finally {
@@ -1355,6 +1474,7 @@ async function selectPexelsItem(item, type, statusEl) {
       const url = URL.createObjectURL(blob);
       $("#aiVideoPreview").innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
       statusEl.textContent = `가져왔어요! (촬영: ${item.credit || "Pexels"})`;
+      syncStudioMedia();
     } else {
       const res = await fetch(item.imageUrl);
       const blob = await res.blob();
@@ -1363,6 +1483,7 @@ async function selectPexelsItem(item, type, statusEl) {
       aiSelectedImageDataUrl = dataUrl;
       renderAiGallery();
       statusEl.textContent = `가져왔어요! (촬영: ${item.credit || "Pexels"})`;
+      syncStudioMedia();
     }
   } catch (e) {
     statusEl.textContent = "";
@@ -1450,6 +1571,7 @@ async function composeCardImage() {
     aiSelectedImageDataUrl = composed;
     renderAiGallery();
     statusEl.textContent = "완료! 갤러리에 추가됐어요.";
+    syncStudioMedia();
   } catch (e) {
     statusEl.textContent = "";
     alert("합성에 실패했어요: " + e.message);
@@ -1704,8 +1826,9 @@ async function assembleContentSet() {
     const url = URL.createObjectURL(aiVideoBlob);
     const preview = $("#aiVideoPreview");
     if (preview) preview.innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
+    syncStudioMedia();
 
-    statusEl.textContent = "완성했어요! 게시물용 대표 이미지와 릴스 영상이 모두 준비됐어요. 아래 '이 내용으로 콘텐츠 등록하기'를 눌러주세요.";
+    statusEl.textContent = "완성했어요! 게시물용 대표 이미지와 릴스 영상이 모두 준비되어 자동 저장됐어요. 필요하면 위 문구를 다듬고 '검토요청으로 등록'을 눌러주세요.";
   } catch (e) {
     statusEl.textContent = "";
     alert("세트 만들기에 실패했어요: " + e.message);
@@ -1760,6 +1883,7 @@ async function generateAiImage() {
     if (!aiSelectedImageDataUrl) aiSelectedImageDataUrl = dataUrl;
     renderAiGallery();
     statusEl.textContent = "";
+    syncStudioMedia();
   } catch (e) {
     statusEl.textContent = "";
     alert("이미지 생성에 실패했어요: " + e.message);
@@ -1784,6 +1908,7 @@ function renderAiGallery() {
     t.addEventListener("click", () => {
       aiSelectedImageDataUrl = aiGalleryImages[Number(t.dataset.aiThumb)];
       renderAiGallery();
+      syncStudioMedia();
     })
   );
   const videoBtn = $("#genVideoBtn");
@@ -1804,6 +1929,7 @@ async function generateAiVideo() {
     const url = URL.createObjectURL(aiVideoBlob);
     $("#aiVideoPreview").innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
     statusEl.textContent = aiNarrationBlob ? "완성했어요! 음성이 입혀졌어요." : "완성했어요! 아래에서 미리 확인해보세요.";
+    syncStudioMedia();
   } catch (e) {
     statusEl.textContent = "";
     alert("동영상 생성에 실패했어요: " + e.message + " (일부 브라우저에서는 지원하지 않을 수 있어요)");
@@ -1963,7 +2089,9 @@ async function attachAiMediaToSnsItem(id, imageDataUrl, videoBlob) {
       item.videoLink = uploaded.webViewLink || "";
     }
     await saveModule("sns", data);
-    if (currentTab === "sns") refreshCurrentTab();
+    // 콘텐츠 스튜디오 페이지에서 부르는 경우엔 화면을 다시 그리지 않아요 — 편집 중인 폼/콘티가
+    // 통째로 사라지지 않도록, 목록 화면(콘텐츠 운영)일 때만 다시 그려서 최신 상태를 보여줘요.
+    if (currentTab === "sns" && snsSubTab !== "studio") refreshCurrentTab();
   } catch (e) {
     console.error("AI 콘텐츠 미디어 첨부 실패", e);
   }

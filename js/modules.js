@@ -604,13 +604,19 @@ const Modules = {
         <button class="subtab-btn ${sub === "analytics" ? "active" : ""}" data-sns-subtab="analytics">🎯 목표/실적</button>
       </div>`;
     const body =
-      sub === "trends" ? Modules.snsTrendsBody(data, ctx) : sub === "analytics" ? Modules.snsAnalyticsBody(data) : Modules.snsContentBody(data);
-    return nav + body;
+      sub === "studio"
+        ? Modules.studioBody(data, ctx)
+        : sub === "trends"
+        ? Modules.snsTrendsBody(data, ctx)
+        : sub === "analytics"
+        ? Modules.snsAnalyticsBody(data)
+        : Modules.snsContentBody(data);
+    return (sub === "studio" ? "" : nav) + body;
   },
 
   snsContentBody(data) {
     const items = [...data.items].sort((a, b) => (a.scheduledAt || a.date).localeCompare(b.scheduledAt || b.date));
-    const statusTag = (s) => `<span class="tag ${s === "게시완료" ? "tag-ok" : s === "반려" ? "tag-no" : s === "승인" ? "tag-ok" : "tag-wait"}">${s}</span>`;
+    const statusTag = (s) => `<span class="tag ${s === "게시완료" ? "tag-ok" : s === "반려" ? "tag-no" : s === "승인" ? "tag-ok" : s === "작성중" ? "tag-pin" : "tag-wait"}">${s}</span>`;
     const upcoming = items
       .filter((s) => s.status === "승인" && s.autoPublish && s.scheduledAt)
       .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
@@ -636,12 +642,13 @@ const Modules = {
               ${s.videoLink ? `<a href="${esc(s.videoLink)}" target="_blank" rel="noopener" class="tag">🎬 동영상</a>` : ""}
             </div>
             <span>
+              ${s.status === "작성중" ? `<button class="btn btn-tiny btn-primary" data-sns-continue="${s.id}">✏️ 이어서 작성</button>` : ""}
               ${s.status === "검토중" ? `<button class="btn btn-tiny btn-primary" data-sns-approve="${s.id}">승인</button><button class="btn btn-tiny btn-danger" data-sns-reject="${s.id}">반려</button>` : ""}
               ${s.status === "승인" ? `<button class="btn btn-tiny btn-primary" data-sns-publish="${s.id}">게시완료 처리</button>` : ""}
               <button class="btn btn-tiny btn-danger" data-del-sns="${s.id}">삭제</button>
             </span>
           </div>
-          <div class="notice-body" id="sbody_${s.id}" style="display:none;">${esc(s.content).replace(/\n/g, "<br>")}</div>
+          <div class="notice-body" id="sbody_${s.id}" style="display:none;">${esc(s.content).replace(/\n/g, "<br>")}${s.hashtags ? `<br><br><span class="muted">${esc(s.hashtags)}</span>` : ""}</div>
         `).join("") : `<div class="empty">등록된 SNS 콘텐츠가 없어요.</div>`}
       </div>
     `;
@@ -785,27 +792,52 @@ const Modules = {
     `;
   },
 
-  aiContentForm() {
+  // ---------------- SNS: 콘텐츠 스튜디오 (팝업 대신 전용 페이지, 초안이 실시간으로 콘텐츠 운영 목록에 자동 저장돼요) ----------------
+  studioBody(data, ctx) {
+    const item = data.items.find((s) => s.id === ctx.studioDraftId);
+    if (!item) {
+      return `
+        <div class="toolbar"><button class="btn btn-secondary" id="studioBackBtn">← 콘텐츠 운영 목록으로</button></div>
+        <div class="empty">초안을 찾을 수 없어요. 목록으로 돌아가서 다시 시도해주세요.</div>
+      `;
+    }
+    const platforms = ["인스타그램", "페이스북", "블로그", "유튜브", "기타"];
+    const tones = ["자극적으로(두괄식)", "친근하게", "전문적으로", "유머러스하게", "감성적으로"];
     return `
-      <h3>🤖 AI로 SNS 콘텐츠 만들기</h3>
+      <div class="toolbar" style="justify-content:space-between;">
+        <button class="btn btn-secondary" id="studioBackBtn">← 콘텐츠 운영 목록으로</button>
+        <span id="studioSaveStatus" class="muted">자동 저장됨</span>
+      </div>
+      <div class="panel">
+      <h3>🎬 콘텐츠 스튜디오</h3>
+      <p class="hint">이 페이지에서 작업하는 내용은 잠시 후 자동으로 저장되고, "콘텐츠 운영" 목록에 "작성중" 상태로 바로 나타나요. 언제든 나갔다가 "✏️ 이어서 작성"으로 돌아올 수 있어요.</p>
       <div class="form-grid">
         <label>플랫폼
-          <select id="ai_platform"><option>인스타그램</option><option>페이스북</option><option>블로그</option><option>유튜브</option><option>기타</option></select>
+          <select id="ai_platform">${platforms.map((p) => `<option ${item.platform === p ? "selected" : ""}>${p}</option>`).join("")}</select>
         </label>
-        <label>주제/키워드 <input id="ai_topic" placeholder="예: 신제품 출시 이벤트"></label>
+        <label>제목 <input id="ai_title" value="${esc(item.title === "(제목없음)" ? "" : item.title)}" placeholder="예: 신제품 출시 이벤트"></label>
+        <label>담당자 이름 <input id="ai_assignee" value="${esc(item.assignee || "")}"></label>
+        <label>게시 예정일 <input type="date" id="ai_date" value="${esc(item.date || todayStr())}"></label>
+        <label>게시 예정 시각 <input type="time" id="ai_time" value="${esc(item.time || "09:00")}"></label>
+        <label class="checkbox-label"><input type="checkbox" id="ai_autoPublish" ${item.autoPublish ? "checked" : ""}> 승인되면 예정 시각에 자동으로 "게시완료" 처리 + 캘린더 자동 등록</label>
+        <label>승인자 이메일 <input id="ai_approver" value="${esc(item.approver || "")}" placeholder="approver@company.com"></label>
+      </div>
+
+      <div class="form-grid" style="margin-top:12px;">
+        <label>주제/키워드 <input id="ai_topic" value="${esc(item.topic || "")}" placeholder="예: 신제품 출시 이벤트"></label>
         <label>톤앤매너
-          <select id="ai_tone"><option>자극적으로(두괄식)</option><option>친근하게</option><option>전문적으로</option><option>유머러스하게</option><option>감성적으로</option></select>
+          <select id="ai_tone">${tones.map((t) => `<option ${item.tone === t ? "selected" : ""}>${t}</option>`).join("")}</select>
         </label>
       </div>
       <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
         <button class="btn btn-secondary btn-tiny" id="genTextBtn">✍️ 문구 생성</button>
       </div>
-      <div id="aiTextResult" style="display:none; margin-top:10px;">
+      <div id="aiTextResult" style="${item.content ? "" : "display:none;"} margin-top:10px;">
         <label style="display:flex; flex-direction:column; gap:5px; font-size:12.5px; color:var(--muted); font-weight:600;">
           생성된 문구 (자유롭게 수정하세요)
-          <textarea id="ai_caption" rows="4"></textarea>
+          <textarea id="ai_caption" rows="4">${esc(item.content || "")}</textarea>
         </label>
-        <div id="ai_hashtags" class="hint" style="margin-top:6px;"></div>
+        <div id="ai_hashtags" class="hint" style="margin-top:6px;">${esc(item.hashtags || "")}</div>
         <div class="modal-actions" style="justify-content:flex-start; margin-top:8px;">
           <button class="btn btn-secondary btn-tiny" id="genNarrationBtn">🔊 릴스 나레이션 음성 생성</button>
           <span id="genNarrationStatus" class="muted"></span>
@@ -814,8 +846,9 @@ const Modules = {
       </div>
 
       <div class="form-grid" style="margin-top:16px;">
-        <label>이미지 프롬프트 (비워두면 위 주제를 사용해요) <input id="ai_imgPrompt" placeholder="예: 밝은 카페에서 신제품을 든 손, 사진 느낌"></label>
+        <label>이미지 프롬프트 (비워두면 위 주제를 사용해요) <input id="ai_imgPrompt" value="${esc(item.imagePrompt || "")}" placeholder="예: 밝은 카페에서 신제품을 든 손, 사진 느낌"></label>
       </div>
+      ${item.imageLink || item.videoLink ? `<p class="hint">📎 이미 첨부된 미디어: ${item.imageLink ? `<a href="${esc(item.imageLink)}" target="_blank" rel="noopener">🖼 이미지</a>` : ""} ${item.videoLink ? `<a href="${esc(item.videoLink)}" target="_blank" rel="noopener">🎬 동영상</a>` : ""} (새로 만들면 교체돼요)</p>` : ""}
       <div class="modal-actions" style="justify-content:flex-start;">
         <button class="btn btn-secondary btn-tiny" id="genImageBtn">🎨 이미지 생성</button>
         <span id="genImageStatus" class="muted"></span>
@@ -851,7 +884,7 @@ const Modules = {
       <div style="margin-top:16px; padding:12px; border:1px solid var(--border, #e5e5ea); border-radius:10px;">
         <p class="hint" style="margin:0 0 8px;">🎬 스크립트(또는 위 주제)를 장면별 콘티로 나누고, 각 장면마다 어울리는 이미지를 Pexels 추천/AI 생성/직접 업로드 중에서 골라 타이틀 자막까지 입힌 다음, "일반 게시물용 대표 이미지 + 릴스 영상"을 한 세트로 자동 완성할 수 있어요.</p>
         <div class="form-grid">
-          <label>스크립트 (비워두면 위 주제로 새로 만들어요) <textarea id="ai_script" rows="3" placeholder="이미 써둔 대본이 있다면 붙여넣으세요"></textarea></label>
+          <label>스크립트 (비워두면 위 주제로 새로 만들어요) <textarea id="ai_script" rows="3" placeholder="이미 써둔 대본이 있다면 붙여넣으세요">${esc(item.script || "")}</textarea></label>
           <label>장면 수
             <select id="ai_sceneCount"><option value="3">3장면</option><option value="4">4장면</option><option value="5" selected>5장면</option><option value="6">6장면</option><option value="8">8장면</option></select>
           </label>
@@ -883,8 +916,9 @@ const Modules = {
       <div id="aiVideoPreview"></div>
 
       <div class="modal-actions">
-        <button class="btn btn-secondary" data-close>닫기</button>
-        <button class="btn btn-primary" id="useAiContentBtn">이 내용으로 콘텐츠 등록하기</button>
+        <button class="btn btn-danger btn-tiny" id="studioDeleteBtn">🗑 이 초안 삭제</button>
+        <button class="btn btn-primary" id="studioSubmitBtn">검토요청으로 등록</button>
+      </div>
       </div>
     `;
   },
