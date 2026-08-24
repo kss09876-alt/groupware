@@ -1168,6 +1168,26 @@ function wireAiContentModal() {
   $("#genTextBtn").addEventListener("click", generateAiCaption);
   $("#genImageBtn").addEventListener("click", generateAiImage);
   $("#genVideoBtn").addEventListener("click", generateAiVideo);
+  $("#ai_imageFile")?.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const dataUrl = await fileToDataUrl(file);
+    aiGalleryImages = [dataUrl, ...aiGalleryImages];
+    aiSelectedImageDataUrl = dataUrl;
+    renderAiGallery();
+    const statusEl = $("#aiLocalMediaStatus");
+    if (statusEl) statusEl.textContent = `📎 사진 첨부됨: ${file.name}`;
+  });
+  $("#ai_videoFile")?.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    aiVideoBlob = file;
+    const url = URL.createObjectURL(file);
+    const preview = $("#aiVideoPreview");
+    if (preview) preview.innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
+    const statusEl = $("#aiLocalMediaStatus");
+    if (statusEl) statusEl.textContent = (statusEl.textContent ? statusEl.textContent + " · " : "") + `📎 영상 첨부됨: ${file.name}`;
+  });
   $("#useAiContentBtn").addEventListener("click", () => {
     const topic = $("#ai_topic").value.trim();
     const caption = $("#ai_caption")?.value?.trim() || "";
@@ -1315,6 +1335,15 @@ async function generateAiVideo() {
   }
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function loadImageEl(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -1404,7 +1433,11 @@ async function attachAiMediaToSnsItem(id, imageDataUrl, videoBlob) {
       item.imageLink = uploaded.webViewLink || "";
     }
     if (videoBlob) {
-      const file = new File([videoBlob], `ai_video_${Date.now()}.webm`, { type: "video/webm" });
+      // 사용자가 직접 첨부한 File이면 원래 이름/타입을 유지하고, AI 슬라이드쇼로 만든 Blob이면 webm으로 저장해요.
+      const isUserFile = videoBlob instanceof File;
+      const file = isUserFile
+        ? videoBlob
+        : new File([videoBlob], `ai_video_${Date.now()}.webm`, { type: "video/webm" });
       const uploaded = await Drive.uploadDocument(dataFolderId, file);
       item.videoFileId = uploaded.id;
       item.videoLink = uploaded.webViewLink || "";

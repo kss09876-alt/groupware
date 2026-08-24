@@ -817,6 +817,13 @@ const Modules = {
       </div>
       <div id="aiImageGallery" class="ai-image-gallery"></div>
 
+      <p class="hint" style="margin-top:14px;">🎬 영상은 AI로 만들지 않고, 직접 촬영/편집한 사진이나 영상을 아래에서 첨부해서 써도 돼요.</p>
+      <div class="modal-actions" style="justify-content:flex-start;">
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 내 사진 첨부<input type="file" id="ai_imageFile" accept="image/*" style="display:none;"></label>
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 내 영상 첨부<input type="file" id="ai_videoFile" accept="video/*" style="display:none;"></label>
+        <span id="aiLocalMediaStatus" class="muted"></span>
+      </div>
+
       <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
         <button class="btn btn-secondary btn-tiny" id="genVideoBtn" disabled>🎬 슬라이드쇼 동영상 만들기 (이미지 2장 이상 필요)</button>
         <span id="genVideoStatus" class="muted"></span>
