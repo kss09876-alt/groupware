@@ -1267,7 +1267,8 @@ async function generateAiNarration() {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || data.error) {
-      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+      const attemptsDetail = data && data.attempts ? "\n시도한 언어코드: " + data.attempts.map((a) => `${a.lang}(${a.detail})`).join(", ") : "";
+      throw new Error(((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")") + attemptsDetail);
     }
     const byteChars = atob(data.audio);
     const bytes = new Uint8Array(byteChars.length);

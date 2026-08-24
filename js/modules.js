@@ -794,7 +794,7 @@ const Modules = {
         </label>
         <label>주제/키워드 <input id="ai_topic" placeholder="예: 신제품 출시 이벤트"></label>
         <label>톤앤매너
-          <select id="ai_tone"><option>친근하게</option><option>전문적으로</option><option>유머러스하게</option><option>감성적으로</option></select>
+          <select id="ai_tone"><option>자극적으로(두괄식)</option><option>친근하게</option><option>전문적으로</option><option>유머러스하게</option><option>감성적으로</option></select>
         </label>
       </div>
       <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
