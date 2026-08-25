@@ -190,7 +190,6 @@ const Modules = {
     const docRow = (key, doc) => `
       <div class="doc-row">
         <div class="doc-info">
-          <span class="doc-icon">📄</span>
           <div>
             <div class="doc-name">${esc(doc.label)}</div>
             <div class="doc-meta">${doc.updatedAt ? `${fmtDate(doc.updatedAt)} 업데이트` : "미등록"}</div>
@@ -198,7 +197,7 @@ const Modules = {
         </div>
         <div class="doc-actions">
           ${doc.webViewLink ? `<a class="btn btn-tiny btn-secondary" href="${esc(doc.webViewLink)}" target="_blank" rel="noopener">다운로드</a>` : ""}
-          ${doc.fileId ? `<button class="btn btn-tiny btn-secondary ai-fill-btn" data-doc-key="${key}">🤖 AI로 채우기</button>` : ""}
+          ${doc.fileId ? `<button class="btn btn-tiny btn-secondary ai-fill-btn" data-doc-key="${key}">AI로 채우기</button>` : ""}
           <label class="btn btn-tiny btn-primary doc-upload-label">
             ${doc.fileId ? "재업로드" : "업로드"}
             <input type="file" class="doc-upload-input" data-doc-key="${key}" hidden>
@@ -410,7 +409,7 @@ const Modules = {
     };
     const rows = Object.entries(fields || {}).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(fmtVal(v))}</td></tr>`).join("");
     return `
-      <h3>🤖 AI 추출 결과 확인 — ${esc(label)}</h3>
+      <h3>AI 추출 결과 확인 — ${esc(label)}</h3>
       <p class="hint">업로드한 서류에서 AI가 아래 정보를 읽어냈어요. 내용을 확인한 뒤 적용해주세요. AI가 잘못 읽었을 수 있으니, 적용 후에도 꼭 한 번 더 확인해주세요.</p>
       <table class="kv" style="margin-bottom:10px">${rows || `<tr><td class="empty">추출된 정보가 없어요.</td></tr>`}</table>
       <div class="modal-actions">
@@ -600,8 +599,8 @@ const Modules = {
     const sub = ctx.snsSubTab || "content";
     const nav = `<div class="subtab-nav">
         <button class="subtab-btn ${sub === "content" ? "active" : ""}" data-sns-subtab="content">콘텐츠 운영</button>
-        <button class="subtab-btn ${sub === "trends" ? "active" : ""}" data-sns-subtab="trends">🔥 오늘의 추천</button>
-        <button class="subtab-btn ${sub === "analytics" ? "active" : ""}" data-sns-subtab="analytics">🎯 목표/실적</button>
+        <button class="subtab-btn ${sub === "trends" ? "active" : ""}" data-sns-subtab="trends">오늘의 추천</button>
+        <button class="subtab-btn ${sub === "analytics" ? "active" : ""}" data-sns-subtab="analytics">목표/실적</button>
       </div>`;
     const body =
       sub === "studio"
@@ -646,7 +645,7 @@ const Modules = {
       <div id="shortsStep1" class="panel">
         <h3>1. 대본과 장르를 정해주세요</h3>
         <p class="hint">${publishedHint || "아직 게시완료 실적이 없어서, 지금은 일반적인 기준으로 추천해요. 실적이 쌓일수록 추천이 더 정교해져요."}</p>
-        <p class="hint">✏️ 여기서는 나레이션과 장면별 이미지만 추천해드려요 — 화면 자막 합성이나 영상 편집은 프리미어 등에서 직접 해주세요. 입력한 내용은 새로고침해도 이 브라우저에 임시로 남아있어요.</p>
+        <p class="hint">여기서는 나레이션과 장면별 이미지만 추천해드려요 — 화면 자막 합성이나 영상 편집은 프리미어 등에서 직접 해주세요. 입력한 내용은 새로고침해도 이 브라우저에 임시로 남아있어요.</p>
         <div class="form-grid">
           <label>주제/키워드 <input id="ai_topic" value="${esc(item.topic || "")}" placeholder="예: 신제품 출시 이벤트"></label>
           <label>장르/스타일
@@ -658,16 +657,16 @@ const Modules = {
           </label>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" id="genStoryboardBtn">📝 콘티 만들고 다음 단계로</button>
+          <button class="btn btn-primary" id="genStoryboardBtn">콘티 만들고 다음 단계로</button>
           <span id="storyboardStatus" class="muted"></span>
         </div>
       </div>
 
       <div id="shortsStep2" class="panel" style="display:none;">
         <h3>2. 장면별 나레이션과 이미지를 확인해주세요</h3>
-        <p class="hint">각 장면 아래에서 🎨 AI 이미지 / 📷 Pexels 추천 / 📎 업로드 중 골라서 첨부해주세요. 자막은 합성되지 않고, "화면 자막(참고용)"은 나중에 편집할 때 참고할 문구예요.</p>
+        <p class="hint">각 장면 아래에서 AI 이미지 / Pexels 추천 / 업로드 중 골라서 첨부해주세요. 자막은 합성되지 않고, "화면 자막(참고용)"은 나중에 편집할 때 참고할 문구예요.</p>
         <div class="modal-actions" style="justify-content:flex-start;">
-          <button class="btn btn-secondary btn-tiny" id="fillAllScenesBtn">🪄 빈 장면 AI 이미지로 한번에 채우기</button>
+          <button class="btn btn-secondary btn-tiny" id="fillAllScenesBtn">빈 장면 AI 이미지로 한번에 채우기</button>
           <span id="fillAllScenesStatus" class="muted"></span>
         </div>
         <div id="storyboardScenes"></div>
@@ -682,7 +681,7 @@ const Modules = {
         <p class="hint">나레이션과 이미지를 장면 순서대로 정리했어요. "검토요청으로 등록"을 눌러야 드라이브에 저장되고 SNS 운영 목록에 나타나요.</p>
         <div class="modal-actions">
           <button class="btn btn-secondary btn-tiny" data-shorts-back="2">← 이전</button>
-          <button class="btn btn-secondary btn-tiny" id="shortsDownloadAllBtn">⬇️ 이미지+대본 전체 다운로드</button>
+          <button class="btn btn-secondary btn-tiny" id="shortsDownloadAllBtn">이미지+대본 전체 다운로드</button>
           <span id="shortsDownloadStatus" class="muted"></span>
         </div>
         <div id="shortsFinalList"></div>
@@ -713,8 +712,8 @@ const Modules = {
         <span id="studioSaveStatus" class="muted">자동 저장됨</span>
       </div>
       <div class="panel">
-        <h3>📰 게시물 스튜디오</h3>
-        <p class="hint">✏️ 먼저 "텍스트" 탭에서 슬라이드에 들어갈 문구를 입력해주세요 — 그 문구를 바탕으로 "이미지" 탭에서 AI 이미지 생성/Pexels 추천을 바로 쓸 수 있어요.</p>
+        <h3>게시물 스튜디오</h3>
+        <p class="hint">먼저 "텍스트" 탭에서 슬라이드에 들어갈 문구를 입력해주세요 — 그 문구를 바탕으로 "이미지" 탭에서 AI 이미지 생성/Pexels 추천을 바로 쓸 수 있어요.</p>
         <div class="form-grid">
           <label>주제/제목 <input id="ai_topic" value="${esc(item.topic || "")}" placeholder="예: 이달의 추천템 5가지"></label>
           <label>승인자 이메일 <input id="ai_approver" value="${esc(item.approver || "")}" placeholder="approver@company.com"></label>
@@ -725,16 +724,16 @@ const Modules = {
           <div class="post-canvas-stage" id="postCanvasStage"></div>
           <div class="post-settings-panel">
             <div class="post-tabs" id="postTabs">
-              <button class="post-tab-btn" data-post-tab="text">✏️ 텍스트</button>
-              <button class="post-tab-btn" data-post-tab="image">🖼 이미지</button>
-              <button class="post-tab-btn" data-post-tab="logo" id="postLogoTabBtn">🔖 로고</button>
+              <button class="post-tab-btn" data-post-tab="text">텍스트</button>
+              <button class="post-tab-btn" data-post-tab="image">이미지</button>
+              <button class="post-tab-btn" data-post-tab="logo" id="postLogoTabBtn">로고</button>
             </div>
             <div id="postTabPanel" class="post-tab-panel"></div>
           </div>
         </div>
 
         <div class="modal-actions">
-          <button class="btn btn-secondary" id="postDownloadBtn">⬇️ 현재 슬라이드 다운로드</button>
+          <button class="btn btn-secondary" id="postDownloadBtn">현재 슬라이드 다운로드</button>
           <button class="btn btn-primary" id="postSubmitBtn">검토요청으로 등록 (드라이브 저장)</button>
           <span id="postSubmitStatus" class="muted"></span>
         </div>
@@ -753,11 +752,11 @@ const Modules = {
     return `
       <div class="toolbar">
         <label class="checkbox-label" style="margin-right:auto;"><input type="checkbox" id="snsSelectAllChk"> 전체선택</label>
-        <button class="btn btn-danger" id="snsBulkDeleteBtn">🗑 선택 삭제</button>
-        <button class="btn btn-secondary" id="aiContentBtn">🤖 AI로 콘텐츠 만들기</button>
+        <button class="btn btn-danger" id="snsBulkDeleteBtn">선택 삭제</button>
+        <button class="btn btn-secondary" id="aiContentBtn">AI로 콘텐츠 만들기</button>
         <button class="btn btn-primary" id="newSnsBtn">+ 콘텐츠 등록</button>
       </div>
-      <p class="hint">🤖 AI로 콘텐츠 만들기: 주제만 입력하면 문구(무료 Gemini), 이미지(무료 Workers AI/Pollinations), 릴스 나레이션 음성(무료 Workers AI TTS)까지 만들어주고, 이미지 2장 이상이면 나레이션 길이에 맞춘 슬라이드쇼 동영상도 만들 수 있어요. 직접 찍은 사진/영상을 대신 첨부할 수도 있어요.<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 워크플로우까지 지원해요. (게시는 승인 후 담당자가 직접 "게시완료 처리" 버튼을 눌러요.)</p>
+      <p class="hint">AI로 콘텐츠 만들기: 주제만 입력하면 문구(무료 Gemini), 이미지(무료 Workers AI/Pollinations), 릴스 나레이션 음성(무료 Workers AI TTS)까지 만들어주고, 이미지 2장 이상이면 나레이션 길이에 맞춘 슬라이드쇼 동영상도 만들 수 있어요. 직접 찍은 사진/영상을 대신 첨부할 수도 있어요.<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 워크플로우까지 지원해요. (게시는 승인 후 담당자가 직접 "게시완료 처리" 버튼을 눌러요.)</p>
       <div class="panel">
         ${items.length ? items.map((s) => `
           <div class="list-row expand" data-sns="${s.id}">
@@ -769,15 +768,15 @@ const Modules = {
               <span class="muted">담당 ${esc(s.assignee)} · 게시예정 ${esc(s.date)}${s.time ? " " + esc(s.time) : ""}</span>
               ${
                 s.imageLinks && s.imageLinks.length > 1
-                  ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">${s.contentType === "shorts" ? "🎬 장면 이미지" : "📰 게시물"} ${s.imageLinks.length}장</a>`
+                  ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">${s.contentType === "shorts" ? "장면 이미지" : "게시물"} ${s.imageLinks.length}장</a>`
                   : s.imageLink
-                  ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">🖼 이미지</a>`
+                  ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">이미지</a>`
                   : ""
               }
-              ${s.videoLink ? `<a href="${esc(s.videoLink)}" target="_blank" rel="noopener" class="tag">🎬 동영상</a>` : ""}
+              ${s.videoLink ? `<a href="${esc(s.videoLink)}" target="_blank" rel="noopener" class="tag">동영상</a>` : ""}
             </div>
             <span>
-              ${s.status === "작성중" ? `<button class="btn btn-tiny btn-primary" data-sns-continue="${s.id}">✏️ 이어서 작성</button>` : ""}
+              ${s.status === "작성중" ? `<button class="btn btn-tiny btn-primary" data-sns-continue="${s.id}">이어서 작성</button>` : ""}
               ${s.status === "검토중" ? `<button class="btn btn-tiny btn-primary" data-sns-approve="${s.id}">승인</button><button class="btn btn-tiny btn-danger" data-sns-reject="${s.id}">반려</button>` : ""}
               ${s.status === "승인" ? `<button class="btn btn-tiny btn-primary" data-sns-publish="${s.id}">게시완료 처리</button>` : ""}
               <button class="btn btn-tiny btn-danger" data-del-sns="${s.id}">삭제</button>
@@ -796,7 +795,7 @@ const Modules = {
     const items = isToday ? t.items || [] : [];
     return `
       <div class="toolbar">
-        <button class="btn btn-primary" id="fetchTrendsBtn">${isToday && items.length ? "🔄 새 아이디어 다시 뽑기" : "🔥 오늘의 아이디어 뽑기"}</button>
+        <button class="btn btn-primary" id="fetchTrendsBtn">${isToday && items.length ? "새 아이디어 다시 뽑기" : "오늘의 아이디어 뽑기"}</button>
       </div>
       <p class="hint">"아트아트(artart.today)"·"줌테일(zoomtale)" 같은 감성으로, 예술·디자인·컬처·라이프 영역의 흥미로운 콘텐츠 아이디어 7가지 + 우리 동네/지역과 연결된 "로컬" 소재 3가지를 AI가 매번 새로 브레인스토밍해줘요(실시간 뉴스가 아니라 AI가 창작한 소재예요, 법인정보 탭의 주소를 참고해요). 마음에 드는 걸 고르면 문구+이미지까지 자동으로 만들어드리고, 목표/실적 탭에서 일반 소재와 로컬 소재 중 뭐가 더 반응이 좋은지 비교해볼 수 있어요.</p>
       <div id="trendsResult">
@@ -814,11 +813,11 @@ const Modules = {
           <div class="panel">
             <div class="muted" style="margin-bottom:6px;"><span class="tag">${esc(t.category)}</span> · <span class="tag">${esc(t.platform)}</span></div>
             <b>${esc(t.title)}</b>
-            <p style="font-size:13px; margin:8px 0;">💡 ${esc(t.hook)}</p>
+            <p style="font-size:13px; margin:8px 0;">${esc(t.hook)}</p>
             <p class="muted" style="font-size:12px;">${esc(t.reason)}</p>
             <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
-              <button class="btn btn-primary btn-tiny" data-use-trend-shorts="${i}">🎬 쇼츠 스튜디오에서 만들기</button>
-              <button class="btn btn-secondary btn-tiny" data-use-trend-post="${i}">📰 게시물 스튜디오에서 만들기</button>
+              <button class="btn btn-primary btn-tiny" data-use-trend-shorts="${i}">쇼츠 스튜디오에서 만들기</button>
+              <button class="btn btn-secondary btn-tiny" data-use-trend-post="${i}">게시물 스튜디오에서 만들기</button>
             </div>
           </div>
         `
@@ -852,7 +851,7 @@ const Modules = {
         </div>
       </div>`;
     return `
-      <div class="toolbar"><button class="btn btn-secondary" id="editGoalsBtn">🎯 목표 수정</button></div>
+      <div class="toolbar"><button class="btn btn-secondary" id="editGoalsBtn">목표 수정</button></div>
       <div class="grid grid-3" style="margin-bottom:16px;">
         <div class="stat-card"><div class="stat-label">오늘 게시한 콘텐츠</div><div class="stat-value">${todayPublished} / 1건</div></div>
         <div class="stat-card"><div class="stat-label">일일 목표 팔로워 증가</div><div class="stat-value">${dailyFollowerGoal.toLocaleString()}명</div></div>
@@ -880,7 +879,7 @@ const Modules = {
 
   goalsForm(goals) {
     return `
-      <h3>🎯 SNS 목표 설정</h3>
+      <h3>SNS 목표 설정</h3>
       <div class="form-grid">
         <label>일일 목표 팔로워 증가수 <input type="number" id="f_dailyFollowerGoal" value="${esc(goals.dailyFollowerGoal)}"></label>
         <label>일일 목표 조회수 <input type="number" id="f_dailyViewGoal" value="${esc(goals.dailyViewGoal)}"></label>
@@ -944,8 +943,8 @@ const Modules = {
         <span id="studioSaveStatus" class="muted">자동 저장됨</span>
       </div>
       <div class="panel">
-      <h3>🎬 콘텐츠 스튜디오</h3>
-      <p class="hint">이 페이지에서 작업하는 내용은 잠시 후 자동으로 저장되고, "콘텐츠 운영" 목록에 "작성중" 상태로 바로 나타나요. 언제든 나갔다가 "✏️ 이어서 작성"으로 돌아올 수 있어요.</p>
+      <h3>콘텐츠 스튜디오</h3>
+      <p class="hint">이 페이지에서 작업하는 내용은 잠시 후 자동으로 저장되고, "콘텐츠 운영" 목록에 "작성중" 상태로 바로 나타나요. 언제든 나갔다가 "이어서 작성"으로 돌아올 수 있어요.</p>
       <div class="form-grid">
         <label>플랫폼
           <select id="ai_platform">${platforms.map((p) => `<option ${item.platform === p ? "selected" : ""}>${p}</option>`).join("")}</select>
@@ -964,7 +963,7 @@ const Modules = {
         </label>
       </div>
       <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
-        <button class="btn btn-secondary btn-tiny" id="genTextBtn">✍️ 문구 생성</button>
+        <button class="btn btn-secondary btn-tiny" id="genTextBtn">문구 생성</button>
       </div>
       <div id="aiTextResult" style="${item.content ? "" : "display:none;"} margin-top:10px;">
         <label style="display:flex; flex-direction:column; gap:5px; font-size:12.5px; color:var(--muted); font-weight:600;">
@@ -973,7 +972,7 @@ const Modules = {
         </label>
         <div id="ai_hashtags" class="hint" style="margin-top:6px;">${esc(item.hashtags || "")}</div>
         <div class="modal-actions" style="justify-content:flex-start; margin-top:8px;">
-          <button class="btn btn-secondary btn-tiny" id="genNarrationBtn">🔊 릴스 나레이션 음성 생성</button>
+          <button class="btn btn-secondary btn-tiny" id="genNarrationBtn">릴스 나레이션 음성 생성</button>
           <span id="genNarrationStatus" class="muted"></span>
         </div>
         <div id="aiNarrationPreview"></div>
@@ -982,15 +981,15 @@ const Modules = {
       <div class="form-grid" style="margin-top:16px;">
         <label>이미지 프롬프트 (비워두면 위 주제를 사용해요) <input id="ai_imgPrompt" value="${esc(item.imagePrompt || "")}" placeholder="예: 밝은 카페에서 신제품을 든 손, 사진 느낌"></label>
       </div>
-      ${item.imageLink || item.videoLink ? `<p class="hint">📎 이미 첨부된 미디어: ${item.imageLink ? `<a href="${esc(item.imageLink)}" target="_blank" rel="noopener">🖼 이미지</a>` : ""} ${item.videoLink ? `<a href="${esc(item.videoLink)}" target="_blank" rel="noopener">🎬 동영상</a>` : ""} (새로 만들면 교체돼요)</p>` : ""}
+      ${item.imageLink || item.videoLink ? `<p class="hint">이미 첨부된 미디어: ${item.imageLink ? `<a href="${esc(item.imageLink)}" target="_blank" rel="noopener">이미지</a>` : ""} ${item.videoLink ? `<a href="${esc(item.videoLink)}" target="_blank" rel="noopener">동영상</a>` : ""} (새로 만들면 교체돼요)</p>` : ""}
       <div class="modal-actions" style="justify-content:flex-start;">
-        <button class="btn btn-secondary btn-tiny" id="genImageBtn">🎨 이미지 생성</button>
+        <button class="btn btn-secondary btn-tiny" id="genImageBtn">이미지 생성</button>
         <span id="genImageStatus" class="muted"></span>
       </div>
       <div id="aiImageGallery" class="ai-image-gallery"></div>
 
       <div style="margin-top:14px; padding:12px; border:1px solid var(--border, #e5e5ea); border-radius:10px; background:#fafafc;">
-        <p class="hint" style="margin:0 0 8px;">🖋 위에서 고른 이미지 위에 큼직한 타이틀 자막을 얹어서 카드뉴스/썸네일 스타일로 만들 수 있어요.</p>
+        <p class="hint" style="margin:0 0 8px;">위에서 고른 이미지 위에 큼직한 타이틀 자막을 얹어서 카드뉴스/썸네일 스타일로 만들 수 있어요.</p>
         <div class="form-grid">
           <label>타이틀 문구 <input id="ai_cardTitle" placeholder="예: 지금 99%가 모르는 이야기"></label>
         </div>
@@ -999,24 +998,24 @@ const Modules = {
           <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">글자색
             <select id="ai_cardColor"><option value="#ffffff">흰색</option><option value="#ffe600">노란색</option><option value="#111111">검정</option></select>
           </label>
-          <button class="btn btn-secondary btn-tiny" id="composeCardBtn">🖼 타이틀 합성해서 갤러리에 추가</button>
+          <button class="btn btn-secondary btn-tiny" id="composeCardBtn">타이틀 합성해서 갤러리에 추가</button>
           <span id="composeCardStatus" class="muted"></span>
         </div>
       </div>
 
-      <p class="hint" style="margin-top:14px;">📷 Pexels에서 실제 사진/영상을 무료로 검색해서 가져올 수도 있어요(저작권 걱정 없어요).</p>
+      <p class="hint" style="margin-top:14px;">Pexels에서 실제 사진/영상을 무료로 검색해서 가져올 수도 있어요(저작권 걱정 없어요).</p>
       <div class="form-grid">
         <label>검색어 (비워두면 위 주제를 사용해요) <input id="ai_pexelsQuery" placeholder="예: 카페 인테리어, 커피"></label>
       </div>
       <div class="modal-actions" style="justify-content:flex-start;">
-        <button class="btn btn-secondary btn-tiny" id="searchPexelsPhotoBtn">🖼 Pexels 사진 검색</button>
-        <button class="btn btn-secondary btn-tiny" id="searchPexelsVideoBtn">🎬 Pexels 영상 검색</button>
+        <button class="btn btn-secondary btn-tiny" id="searchPexelsPhotoBtn">Pexels 사진 검색</button>
+        <button class="btn btn-secondary btn-tiny" id="searchPexelsVideoBtn">Pexels 영상 검색</button>
         <span id="pexelsStatus" class="muted"></span>
       </div>
       <div id="pexelsResults" class="ai-image-gallery"></div>
 
       <div style="margin-top:16px; padding:12px; border:1px solid var(--border, #e5e5ea); border-radius:10px;">
-        <p class="hint" style="margin:0 0 8px;">🎬 스크립트(또는 위 주제)를 장면별 콘티로 나누고, 각 장면마다 어울리는 이미지를 Pexels 추천/AI 생성/직접 업로드 중에서 골라 첨부할 수 있어요(자막은 합성하지 않아요).</p>
+        <p class="hint" style="margin:0 0 8px;">스크립트(또는 위 주제)를 장면별 콘티로 나누고, 각 장면마다 어울리는 이미지를 Pexels 추천/AI 생성/직접 업로드 중에서 골라 첨부할 수 있어요(자막은 합성하지 않아요).</p>
         <div class="form-grid">
           <label>스크립트 (비워두면 위 주제로 새로 만들어요) <textarea id="ai_script" rows="3" placeholder="이미 써둔 대본이 있다면 붙여넣으세요">${esc(item.script || "")}</textarea></label>
           <label>장면 수
@@ -1024,34 +1023,34 @@ const Modules = {
           </label>
         </div>
         <div class="modal-actions" style="justify-content:flex-start;">
-          <button class="btn btn-secondary btn-tiny" id="genStoryboardBtn">📝 콘티 만들기</button>
+          <button class="btn btn-secondary btn-tiny" id="genStoryboardBtn">콘티 만들기</button>
           <span id="storyboardStatus" class="muted"></span>
         </div>
         <div id="storyboardScenes"></div>
         <div class="modal-actions" id="storyboardAssembleRow" style="justify-content:flex-start; margin-top:6px; display:none; align-items:center; gap:10px; flex-wrap:wrap;">
-          <button class="btn btn-secondary btn-tiny" id="fillAllScenesBtn">🪄 빈 장면 AI 이미지로 한번에 채우기</button>
+          <button class="btn btn-secondary btn-tiny" id="fillAllScenesBtn">빈 장면 AI 이미지로 한번에 채우기</button>
           <span id="fillAllScenesStatus" class="muted"></span>
-          <button class="btn btn-primary btn-tiny" id="assembleSetBtn">📸 첫 장면 이미지를 대표 이미지로 설정</button>
+          <button class="btn btn-primary btn-tiny" id="assembleSetBtn">첫 장면 이미지를 대표 이미지로 설정</button>
           <span id="assembleSetStatus" class="muted"></span>
         </div>
       </div>
 
-      <p class="hint" style="margin-top:14px;">🎬 위 콘티 기능 대신, 직접 촬영/편집한 사진이나 영상을 아래에서 첨부해서 써도 돼요.</p>
+      <p class="hint" style="margin-top:14px;">위 콘티 기능 대신, 직접 촬영/편집한 사진이나 영상을 아래에서 첨부해서 써도 돼요.</p>
       <div class="modal-actions" style="justify-content:flex-start;">
-        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 내 사진 첨부<input type="file" id="ai_imageFile" accept="image/*" style="display:none;"></label>
-        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 내 영상 첨부<input type="file" id="ai_videoFile" accept="video/*" style="display:none;"></label>
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">내 사진 첨부<input type="file" id="ai_imageFile" accept="image/*" style="display:none;"></label>
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">내 영상 첨부<input type="file" id="ai_videoFile" accept="video/*" style="display:none;"></label>
         <span id="aiLocalMediaStatus" class="muted"></span>
       </div>
 
       <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
-        <button class="btn btn-secondary btn-tiny" id="genVideoBtn" disabled>🎬 슬라이드쇼 동영상 만들기 (이미지 2장 이상 필요)</button>
+        <button class="btn btn-secondary btn-tiny" id="genVideoBtn" disabled>슬라이드쇼 동영상 만들기 (이미지 2장 이상 필요)</button>
         <span id="genVideoStatus" class="muted"></span>
       </div>
       <p class="hint">위에서 나레이션 음성을 먼저 만들어두면, 슬라이드쇼 동영상을 만들 때 자동으로 음성이 입혀지고 길이도 나레이션에 맞춰져요.</p>
       <div id="aiVideoPreview"></div>
 
       <div class="modal-actions">
-        <button class="btn btn-danger btn-tiny" id="studioDeleteBtn">🗑 이 초안 삭제</button>
+        <button class="btn btn-danger btn-tiny" id="studioDeleteBtn">이 초안 삭제</button>
         <button class="btn btn-primary" id="studioSubmitBtn">검토요청으로 등록</button>
       </div>
       </div>

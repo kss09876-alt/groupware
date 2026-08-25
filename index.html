@@ -11,13 +11,12 @@
   <!-- 로그인 화면 -->
   <div id="loginScreen" class="login-screen">
     <div class="login-box">
-      <div class="login-logo">🏢</div>
       <h1>사내 그룹웨어</h1>
       <p class="login-sub">구글 드라이브를 저장소로 사용하는 사내 협업 도구</p>
       <div id="googleSignInBtn"></div>
       <p id="loginStatus" class="login-status"></p>
       <div id="setupWarning" class="setup-warning" style="display:none;">
-        ⚠️ js/config.js 에 CLIENT_ID / API_KEY 가 설정되지 않았어요. README.md의 안내를 따라 먼저 설정해주세요.
+        js/config.js 에 CLIENT_ID / API_KEY 가 설정되지 않았어요. README.md의 안내를 따라 먼저 설정해주세요.
       </div>
     </div>
   </div>
@@ -25,7 +24,6 @@
   <!-- 데이터 폴더 연결 화면 -->
   <div id="folderScreen" class="login-screen" style="display:none;">
     <div class="login-box">
-      <div class="login-logo">📁</div>
       <h1>회사 데이터 폴더 연결</h1>
       <p class="login-sub">그룹웨어 데이터를 저장할 구글 드라이브 폴더를 선택하거나 새로 만드세요.<br>같은 회사 동료들과 이 폴더를 공유하면 데이터를 함께 씁니다.</p>
       <button id="createFolderBtn" class="btn btn-primary">새 데이터 폴더 만들기</button>
@@ -39,20 +37,19 @@
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
-        <span class="sidebar-logo">🏢</span>
         <span class="sidebar-title">그룹웨어</span>
         <button id="sidebarCloseBtn" class="sidebar-close-btn" aria-label="메뉴 닫기">✕</button>
       </div>
       <nav class="sidebar-nav">
-        <button class="nav-item active" data-tab="dashboard"><span class="nav-icon">🏠</span>대시보드</button>
-        <button class="nav-item" data-tab="corp"><span class="nav-icon">🏛️</span>법인정보</button>
-        <button class="nav-item" data-tab="notice"><span class="nav-icon">📢</span>공지사항</button>
-        <button class="nav-item" data-tab="calendar"><span class="nav-icon">📅</span>일정/캘린더</button>
-        <button class="nav-item" data-tab="approval"><span class="nav-icon">✅</span>전자결재</button>
-        <button class="nav-item" data-tab="attendance"><span class="nav-icon">⏰</span>근태관리</button>
-        <button class="nav-item" data-tab="sns"><span class="nav-icon">📱</span>SNS 운영</button>
-        <button class="nav-item" data-tab="shorts"><span class="nav-icon">🎬</span>쇼츠 스튜디오</button>
-        <button class="nav-item" data-tab="postStudio"><span class="nav-icon">📰</span>게시물 스튜디오</button>
+        <button class="nav-item active" data-tab="dashboard">대시보드</button>
+        <button class="nav-item" data-tab="corp">법인정보</button>
+        <button class="nav-item" data-tab="notice">공지사항</button>
+        <button class="nav-item" data-tab="calendar">일정/캘린더</button>
+        <button class="nav-item" data-tab="approval">전자결재</button>
+        <button class="nav-item" data-tab="attendance">근태관리</button>
+        <button class="nav-item" data-tab="sns">SNS 운영</button>
+        <button class="nav-item" data-tab="shorts">쇼츠 스튜디오</button>
+        <button class="nav-item" data-tab="postStudio">게시물 스튜디오</button>
       </nav>
       <div class="sidebar-footer">
         <img id="userAvatar" class="user-avatar" src="" alt="" />
@@ -86,7 +83,7 @@
   <script async defer src="https://apis.google.com/js/api.js"></script>
   <!-- 인감 날인(도장 찍기) 기능에 필요한 pdf-lib / pdf.js는 그 기능을 쓸 때만 불러와요 (js/app.js의 ensurePdfLibs 참고) -->
   <script src="js/drive.js?v=27"></script>
-  <script src="js/modules.js?v=32"></script>
-  <script src="js/app.js?v=32"></script>
+  <script src="js/modules.js?v=33"></script>
+  <script src="js/app.js?v=33"></script>
 </body>
 </html>

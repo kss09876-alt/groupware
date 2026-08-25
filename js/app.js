@@ -1198,7 +1198,7 @@ async function useTrendInPostStudio(trend) {
 // ---------------- 콘텐츠 스튜디오 ----------------
 // 팝업창 대신 전용 페이지에서 AI 콘텐츠를 만들어요. 페이지에 들어가는 순간 "작성중" 상태의
 // 초안을 드라이브에 바로 저장해서 "콘텐츠 운영" 목록에 즉시 나타나고, 이후 입력/생성한 내용도
-// 자동으로(디바운스해서) 계속 저장돼요. 언제든 나갔다가 "✏️ 이어서 작성"으로 돌아올 수 있어요.
+// 자동으로(디바운스해서) 계속 저장돼요. 언제든 나갔다가 "이어서 작성"으로 돌아올 수 있어요.
 async function enterContentStudio(prefill) {
   const data = await loadModule("sns");
   const item = {
@@ -1556,7 +1556,7 @@ function wireContentStudio() {
     aiSelectedImageDataUrl = dataUrl;
     renderAiGallery();
     const statusEl = $("#aiLocalMediaStatus");
-    if (statusEl) statusEl.textContent = `📎 사진 첨부됨: ${file.name}`;
+    if (statusEl) statusEl.textContent = `사진 첨부됨: ${file.name}`;
     syncStudioMedia();
   });
   $("#ai_videoFile")?.addEventListener("change", (e) => {
@@ -1567,7 +1567,7 @@ function wireContentStudio() {
     const preview = $("#aiVideoPreview");
     if (preview) preview.innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
     const statusEl = $("#aiLocalMediaStatus");
-    if (statusEl) statusEl.textContent = (statusEl.textContent ? statusEl.textContent + " · " : "") + `📎 영상 첨부됨: ${file.name}`;
+    if (statusEl) statusEl.textContent = (statusEl.textContent ? statusEl.textContent + " · " : "") + `영상 첨부됨: ${file.name}`;
     syncStudioMedia();
   });
 }
@@ -1647,7 +1647,7 @@ async function generateAiCaption() {
     alert("문구 생성에 실패했어요: " + e.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = "✍️ 문구 생성";
+    btn.textContent = "문구 생성";
   }
 }
 
@@ -2041,7 +2041,7 @@ function renderPostCanvasStage() {
     <div class="post-carousel-dots">${postSlides.map((_, i) => `<span class="${i === postActiveSlideIdx ? "active" : ""}"></span>`).join("")}</div>`
       : "";
   el.innerHTML =
-    (s && s.composedDataUrl ? `<img src="${s.composedDataUrl}">` : `<div class="post-canvas-empty">오른쪽 "🖼 이미지" 탭에서 사진을 골라주세요</div>`) + arrows;
+    (s && s.composedDataUrl ? `<img src="${s.composedDataUrl}">` : `<div class="post-canvas-empty">오른쪽 "이미지" 탭에서 사진을 골라주세요</div>`) + arrows;
   const nav = (dir) => {
     postActiveSlideIdx = (postActiveSlideIdx + dir + postSlides.length) % postSlides.length;
     if (postActiveTab === "logo" && activePostSlide().kind !== "cover") postActiveTab = "image";
@@ -2105,7 +2105,7 @@ function renderPostTabPanel() {
     panelEl.innerHTML = `
       <label class="checkbox-label"><input type="checkbox" id="postLogoEnabledInput" ${s.logoEnabled ? "checked" : ""}> 표지에 로고 표시</label>
       <div class="modal-actions" style="justify-content:flex-start; margin-top:8px;">
-        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 로고 이미지 업로드<input type="file" accept="image/*" id="postLogoFileInput" style="display:none;"></label>
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">로고 이미지 업로드<input type="file" accept="image/*" id="postLogoFileInput" style="display:none;"></label>
         <select id="postLogoPosInput" style="font-size:12px; padding:4px 6px; border-radius:6px;">
           <option value="top-left" ${s.logoPosition === "top-left" ? "selected" : ""}>좌상단</option>
           <option value="top-center" ${s.logoPosition === "top-center" ? "selected" : ""}>중앙상단</option>
@@ -2137,9 +2137,9 @@ function renderPostTabPanel() {
   } else {
     panelEl.innerHTML = `
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
-        <button class="btn btn-secondary btn-tiny" id="postAiImageBtn">🎨 AI 이미지</button>
-        <button class="btn btn-secondary btn-tiny" id="postPexelsBtn">📷 Pexels 추천</button>
-        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 업로드<input type="file" accept="image/*" id="postUploadInput" style="display:none;"></label>
+        <button class="btn btn-secondary btn-tiny" id="postAiImageBtn">AI 이미지</button>
+        <button class="btn btn-secondary btn-tiny" id="postPexelsBtn">Pexels 추천</button>
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">업로드<input type="file" accept="image/*" id="postUploadInput" style="display:none;"></label>
       </div>
       <span class="muted" id="postImageStatus"></span>
       <div class="ai-image-gallery" id="postPexelsResults"></div>
@@ -2517,11 +2517,11 @@ function renderStoryboard() {
         화면 자막(참고용 — 합성되지 않아요, 편집할 때 참고해주세요)
         <input data-scene-field="titleText" data-scene-idx="${i}" value="${escHtml(s.titleText)}">
       </label>
-      <p class="hint" style="margin:6px 0;">🔎 ${escHtml(s.imageKeyword)}</p>
+      <p class="hint" style="margin:6px 0;">${escHtml(s.imageKeyword)}</p>
       <div class="modal-actions" style="justify-content:flex-start;">
-        <button class="btn btn-secondary btn-tiny" data-scene-ai="${i}">🎨 AI 이미지</button>
-        <button class="btn btn-secondary btn-tiny" data-scene-pexels="${i}">📷 Pexels 추천</button>
-        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 업로드<input type="file" accept="image/*" data-scene-upload="${i}" style="display:none;"></label>
+        <button class="btn btn-secondary btn-tiny" data-scene-ai="${i}">AI 이미지</button>
+        <button class="btn btn-secondary btn-tiny" data-scene-pexels="${i}">Pexels 추천</button>
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">업로드<input type="file" accept="image/*" data-scene-upload="${i}" style="display:none;"></label>
         <span class="muted" data-scene-status="${i}"></span>
       </div>
       <div class="ai-image-gallery" data-scene-options="${i}"></div>
