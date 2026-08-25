@@ -16,6 +16,8 @@ let storyboardScenes = []; // 콘티(스토리보드) 장면들: [{sceneNumber, 
 // 콘텐츠 스튜디오(팝업 대신 전용 페이지) 상태 — 지금 편집 중인 SNS 초안의 id와 자동저장 타이머
 let studioDraftId = null;
 let studioSaveTimer = null;
+// 쇼츠 스튜디오(대본→콘티→완성 3단계 마법사)에서, 콘티가 만들어졌을 때 추가로 실행할 훅
+let onStoryboardReadyHook = null;
 // "콘텐츠 등록" 폼으로 넘어갈 때까지 잠깐 들고 있는 첨부 미디어 (저장 시 드라이브에 업로드됨)
 let pendingAiImageDataUrl = null;
 let pendingAiVideoBlob = null;
@@ -204,11 +206,18 @@ const TAB_TITLES = {
   approval: "전자결재",
   attendance: "근태관리",
   sns: "SNS 운영",
+  shorts: "쇼츠 스튜디오",
 };
 
 $$(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => {
-    goTab(btn.dataset.tab);
+    // 쇼츠 스튜디오는 일반 탭과 달리, 들어가는 순간 "작성중" 초안을 바로 만들어서
+    // 실시간으로 저장되기 시작해야 하니 별도 진입 함수를 써요.
+    if (btn.dataset.tab === "shorts") {
+      enterShortsStudio();
+    } else {
+      goTab(btn.dataset.tab);
+    }
     closeMobileSidebar();
   });
 });
@@ -1211,12 +1220,114 @@ async function enterContentStudio(prefill) {
   await refreshCurrentTab();
 }
 
+// 쇼츠 스튜디오: 콘텐츠 스튜디오와 같은 "초안을 바로 만들어서 실시간 자동저장" 원리를
+// 그대로 쓰되, 화면은 대본→콘티→완성 3단계 마법사로 보여줘요. 사이드바 탭 전용이라
+// snsSubTab이 아니라 currentTab 자체를 "shorts"로 바꿔요.
+async function enterShortsStudio() {
+  const data = await loadModule("sns");
+  const item = {
+    id: uid(),
+    platform: "인스타그램",
+    title: "(제목없음)",
+    content: "",
+    hashtags: "",
+    topic: "",
+    tone: "교육형",
+    imagePrompt: "",
+    script: "",
+    assignee: "",
+    date: todayStr(),
+    time: "09:00",
+    scheduledAt: `${todayStr()}T09:00`,
+    autoPublish: true,
+    calendarEventId: null,
+    approver: "",
+    status: "작성중",
+    createdAt: nowStr(),
+  };
+  data.items.push(item);
+  await saveModule("sns", data);
+  studioDraftId = item.id;
+  aiGalleryImages = [];
+  aiSelectedImageDataUrl = null;
+  aiVideoBlob = null;
+  aiNarrationBlob = null;
+  storyboardScenes = [];
+  currentTab = "shorts";
+  $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === "shorts"));
+  $("#pageTitle").textContent = TAB_TITLES.shorts;
+  $("#content").innerHTML = `<div class="loading">불러오는 중...</div>`;
+  const html = await Modules.shorts(ctx);
+  $("#content").innerHTML = html;
+  wireShortsStudio();
+}
+
+function goShortsStep(step) {
+  [1, 2, 3].forEach((n) => {
+    const panel = $("#shortsStep" + n);
+    if (panel) panel.style.display = n === step ? "block" : "none";
+    const dot = $(`[data-shorts-dot="${n}"]`);
+    if (dot) {
+      dot.classList.toggle("active", n === step);
+      dot.classList.toggle("done", n < step);
+    }
+  });
+}
+
+function wireShortsStudio() {
+  goShortsStep(1);
+  onStoryboardReadyHook = () => goShortsStep(2);
+  $("#genStoryboardBtn")?.addEventListener("click", generateStoryboard);
+  $$("[data-shorts-back]").forEach((b) =>
+    b.addEventListener("click", () => goShortsStep(Number(b.dataset.shortsBack)))
+  );
+  $("#shortsToStep3Btn")?.addEventListener("click", () => {
+    if (!storyboardScenes.length) {
+      alert("먼저 콘티를 만들고 장면 이미지를 골라주세요.");
+      return;
+    }
+    const missing = storyboardScenes.filter((s) => !s.composedDataUrl);
+    if (missing.length) {
+      alert(`아직 이미지를 고르지 않은 장면이 ${missing.length}개 있어요.`);
+      return;
+    }
+    goShortsStep(3);
+  });
+  $("#assembleSetBtn")?.addEventListener("click", assembleContentSet);
+  $("#ai_topic")?.addEventListener("input", scheduleStudioAutosave);
+  $("#ai_tone")?.addEventListener("change", scheduleStudioAutosave);
+  $("#ai_script")?.addEventListener("input", scheduleStudioAutosave);
+  $("#ai_approver")?.addEventListener("input", scheduleStudioAutosave);
+  $("#shortsSubmitBtn")?.addEventListener("click", async () => {
+    if (!aiVideoBlob && !aiSelectedImageDataUrl) {
+      alert("먼저 '릴스+게시물 세트로 완성하기'를 눌러 콘텐츠를 완성해주세요.");
+      return;
+    }
+    await saveStudioDraftNow();
+    const data = await loadModule("sns", true);
+    const item = data.items.find((s) => s.id === studioDraftId);
+    if (!item) return;
+    if (!item.approver) {
+      alert("승인자 이메일을 입력해주세요.");
+      return;
+    }
+    if (item.title === "(제목없음)" && item.topic) item.title = item.topic;
+    item.status = "검토중";
+    await saveModule("sns", data);
+    studioDraftId = null;
+    onStoryboardReadyHook = null;
+    snsSubTab = "content";
+    goTab("sns");
+  });
+}
+
 function wireContentStudio() {
   aiGalleryImages = [];
   aiSelectedImageDataUrl = null;
   aiVideoBlob = null;
   aiNarrationBlob = null;
   storyboardScenes = [];
+  onStoryboardReadyHook = null;
   $("#studioBackBtn")?.addEventListener("click", async () => {
     await saveStudioDraftNow();
     snsSubTab = "content";
@@ -1596,10 +1707,24 @@ async function generateStoryboard() {
   statusEl.textContent = "콘티 만드는 중...";
   try {
     const sceneCount = $("#ai_sceneCount")?.value || 5;
+    const genre = $("#ai_tone")?.value || "";
+    // 지금까지 게시완료된 콘텐츠 중 반응이 좋았던 것들을 참고자료로 같이 넘겨서, 추천이 실제
+    // 실적 데이터를 반영하게 해요(실적이 쌓일수록 더 정교해져요).
+    let pastPerformanceHint = "";
+    try {
+      const sns = await loadModule("sns");
+      const top = [...sns.items]
+        .filter((s) => s.status === "게시완료")
+        .sort((a, b) => (Number(b.actualViews) || 0) - (Number(a.actualViews) || 0))
+        .slice(0, 3);
+      if (top.length) pastPerformanceHint = top.map((t) => t.title).join(", ");
+    } catch (e) {
+      // 실적 데이터 조회 실패는 조용히 무시하고 힌트 없이 계속 진행해요.
+    }
     const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-storyboard", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, script, sceneCount }),
+      body: JSON.stringify({ topic, script, sceneCount, genre, pastPerformanceHint }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || data.error) {
@@ -1610,6 +1735,7 @@ async function generateStoryboard() {
     const row = $("#storyboardAssembleRow");
     if (row) row.style.display = "flex";
     statusEl.textContent = `${storyboardScenes.length}개 장면을 만들었어요. 각 장면마다 이미지를 골라주세요.`;
+    if (onStoryboardReadyHook) onStoryboardReadyHook();
   } catch (e) {
     statusEl.textContent = "";
     alert("콘티 생성에 실패했어요: " + e.message);
@@ -2039,9 +2165,11 @@ async function buildSlideshowVideo(dataUrls, captionText, audioBlob) {
 
   const imgs = await Promise.all(dataUrls.map(loadImageEl));
   const perImageMs = Math.max(1200, totalMs / imgs.length);
+  const FADE_MS = 350; // 장면이 바뀔 때 검은 화면에서 자연스럽게 페이드인되는 시간
   for (const img of imgs) {
     const start = Date.now();
     while (Date.now() - start < perImageMs) {
+      const elapsed = Date.now() - start;
       ctx.fillStyle = "#111";
       ctx.fillRect(0, 0, W, H);
       const scale = Math.max(W / img.width, H / img.height);
@@ -2055,6 +2183,13 @@ async function buildSlideshowVideo(dataUrls, captionText, audioBlob) {
         ctx.font = "26px sans-serif";
         ctx.textAlign = "center";
         wrapCanvasText(ctx, captionText, W / 2, H - 55, W - 40, 30);
+      }
+      // 장면 전환 페이드: 이 이미지가 나온 지 얼마 안 됐으면(FADE_MS 이내) 검은 오버레이를
+      // 점점 옅어지게 덮어씌워서, 컷 전환이 아니라 자연스럽게 밝아지는 느낌을 줘요.
+      if (elapsed < FADE_MS) {
+        const alpha = 1 - elapsed / FADE_MS;
+        ctx.fillStyle = `rgba(0,0,0,${alpha.toFixed(2)})`;
+        ctx.fillRect(0, 0, W, H);
       }
       await new Promise((r) => setTimeout(r, 100));
     }

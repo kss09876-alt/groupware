@@ -614,6 +614,102 @@ const Modules = {
     return (sub === "studio" ? "" : nav) + body;
   },
 
+  // ---------------- 쇼츠 스튜디오 (대본 → 콘티/장면 검토 → 완성, 3단계 마법사) ----------------
+  // 롱폼 영상을 잘라주는 서비스들과 달리 우리는 원본 영상이 없으니, 그 대신 "대본 →
+  // 장면 나누기 → 장면별 이미지·자막 → 완성"을 단계별로 밟아가는 전용 인터페이스로 만들었어요.
+  // 3단계 모두 한 화면에 이미 만들어두고 보이기/숨기기만 바꿔서, 콘티를 만들다가
+  // 앞뒤로 이동해도 입력한 내용이나 골라둔 이미지가 사라지지 않게 했어요.
+  async shorts(ctx) {
+    const data = await ctx.load("sns");
+    const item = data.items.find((s) => s.id === ctx.studioDraftId);
+    if (!item) {
+      return `<div class="empty">쇼츠 초안을 준비하고 있어요. 잠시 후 다시 시도해주세요.</div>`;
+    }
+    const genres = ["교육형", "인터뷰형", "리뷰형", "브이로그형", "자극적(두괄식)"];
+    const published = [...data.items]
+      .filter((s) => s.status === "게시완료")
+      .sort((a, b) => (Number(b.actualViews) || 0) - (Number(a.actualViews) || 0))
+      .slice(0, 3);
+    return `
+      <div class="shorts-steps">
+        <span class="shorts-step-dot active" data-shorts-dot="1">1. 대본/장르</span>
+        <span class="shorts-step-dot" data-shorts-dot="2">2. 장면 검토</span>
+        <span class="shorts-step-dot" data-shorts-dot="3">3. 완성</span>
+      </div>
+
+      <div id="shortsStep1" class="panel">
+        <h3>1. 대본과 장르를 정해주세요</h3>
+        <p class="hint">${
+          published.length
+            ? `참고: 지금까지 반응이 좋았던 콘텐츠 — ${published.map((p) => esc(p.title)).join(", ")}. 비슷한 결의 소재도 추천에 반영돼요.`
+            : "아직 게시완료 실적이 없어서, 지금은 일반적인 기준으로 추천해요. 실적이 쌓일수록 추천이 더 정교해져요."
+        }</p>
+        <div class="form-grid">
+          <label>주제/키워드 <input id="ai_topic" value="${esc(item.topic || "")}" placeholder="예: 신제품 출시 이벤트"></label>
+          <label>장르/스타일
+            <select id="ai_tone">${genres.map((g) => `<option ${item.tone === g ? "selected" : ""}>${g}</option>`).join("")}</select>
+          </label>
+          <label>스크립트 (비워두면 주제로 새로 만들어요) <textarea id="ai_script" rows="3">${esc(item.script || "")}</textarea></label>
+          <label>장면 수
+            <select id="ai_sceneCount"><option value="3">3장면</option><option value="4">4장면</option><option value="5" selected>5장면</option><option value="6">6장면</option><option value="8">8장면</option></select>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="genStoryboardBtn">📝 콘티 만들고 다음 단계로</button>
+          <span id="storyboardStatus" class="muted"></span>
+        </div>
+      </div>
+
+      <div id="shortsStep2" class="panel" style="display:none;">
+        <h3>2. 장면별 이미지를 골라주세요</h3>
+        <p class="hint">각 장면 아래에서 🎨 AI 이미지 / 📷 Pexels 추천 / 📎 업로드 중 골라주세요. 고르면 그 장면 자막이 자동으로 사진 위에 합성돼요.</p>
+        <div class="modal-actions" style="justify-content:flex-start;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">장면 자막 글자 크기 <input type="range" id="ai_titleFontSize" min="28" max="72" value="48"></label>
+        </div>
+        <div id="storyboardScenes"></div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary btn-tiny" data-shorts-back="1">← 이전</button>
+          <button class="btn btn-primary" id="shortsToStep3Btn">다음: 완성하기 →</button>
+        </div>
+      </div>
+
+      <div id="shortsStep3" class="panel" style="display:none;">
+        <h3>3. 릴스 영상 + 게시물 이미지로 완성</h3>
+        <p class="hint">장면 전환에 자연스러운 페이드 효과를 넣어서 이어붙이고, 나레이션 음성도 자동으로 입혀요.</p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary btn-tiny" data-shorts-back="2">← 이전</button>
+          <button class="btn btn-primary btn-tiny" id="assembleSetBtn">🎬📸 릴스+게시물 세트로 완성하기</button>
+          <span id="assembleSetStatus" class="muted"></span>
+        </div>
+        <div id="aiNarrationPreview"></div>
+        <div id="aiVideoPreview"></div>
+        <div id="aiImageGallery" class="ai-image-gallery"></div>
+        <div class="form-grid" style="margin-top:14px;">
+          <label>승인자 이메일 <input id="ai_approver" value="${esc(item.approver || "")}" placeholder="approver@company.com"></label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="shortsSubmitBtn">검토요청으로 등록</button>
+          <span id="studioSaveStatus" class="muted"></span>
+        </div>
+      </div>
+
+      <!-- 기존 콘티 엔진이 참조하는 요소들(문구/이미지프롬프트/캡션 등) — 화면엔 안 보이지만 자동저장·완성 로직이 그대로 재사용돼요 -->
+      <div style="display:none;">
+        <input id="ai_platform" value="${esc(item.platform || "인스타그램")}">
+        <input id="ai_imgPrompt" value="${esc(item.imagePrompt || "")}">
+        <textarea id="ai_caption">${esc(item.content || "")}</textarea>
+        <div id="ai_hashtags">${esc(item.hashtags || "")}</div>
+        <div id="aiTextResult"></div>
+        <div id="genImageStatus"></div>
+        <div id="genNarrationStatus"></div>
+        <div id="genVideoStatus"></div>
+        <input id="ai_pexelsQuery">
+        <div id="pexelsStatus"></div>
+        <div id="pexelsResults"></div>
+      </div>
+    `;
+  },
+
   snsContentBody(data) {
     const items = [...data.items].sort((a, b) => (a.scheduledAt || a.date).localeCompare(b.scheduledAt || b.date));
     const statusTag = (s) => `<span class="tag ${s === "게시완료" ? "tag-ok" : s === "반려" ? "tag-no" : s === "승인" ? "tag-ok" : s === "작성중" ? "tag-pin" : "tag-wait"}">${s}</span>`;
