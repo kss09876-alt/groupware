@@ -730,6 +730,7 @@ const Modules = {
       </div>
       <div class="panel">
         <h3>📰 게시물 스튜디오</h3>
+        <p class="hint">✏️ 먼저 "텍스트" 탭에서 슬라이드에 들어갈 문구를 입력해주세요 — 그 문구를 바탕으로 "이미지" 탭에서 AI 이미지 생성/Pexels 추천을 바로 쓸 수 있어요.</p>
         <div class="form-grid">
           <label>주제/제목 <input id="ai_topic" value="${esc(item.topic || "")}" placeholder="예: 이달의 추천템 5가지"></label>
           <label>승인자 이메일 <input id="ai_approver" value="${esc(item.approver || "")}" placeholder="approver@company.com"></label>
@@ -740,16 +741,17 @@ const Modules = {
           <div class="post-canvas-stage" id="postCanvasStage"></div>
           <div class="post-settings-panel">
             <div class="post-tabs" id="postTabs">
+              <button class="post-tab-btn" data-post-tab="text">✏️ 텍스트</button>
               <button class="post-tab-btn" data-post-tab="image">🖼 이미지</button>
               <button class="post-tab-btn" data-post-tab="logo" id="postLogoTabBtn">🔖 로고</button>
-              <button class="post-tab-btn" data-post-tab="text">✏️ 텍스트</button>
             </div>
             <div id="postTabPanel" class="post-tab-panel"></div>
           </div>
         </div>
 
         <div class="modal-actions">
-          <button class="btn btn-primary" id="postSubmitBtn">검토요청으로 등록</button>
+          <button class="btn btn-secondary" id="postDownloadBtn">⬇️ 현재 슬라이드 다운로드</button>
+          <button class="btn btn-primary" id="postSubmitBtn">검토요청으로 등록 (드라이브 저장)</button>
           <span id="postSubmitStatus" class="muted"></span>
         </div>
       </div>
@@ -764,25 +766,15 @@ const Modules = {
   snsContentBody(data) {
     const items = [...data.items].sort((a, b) => (a.scheduledAt || a.date).localeCompare(b.scheduledAt || b.date));
     const statusTag = (s) => `<span class="tag ${s === "게시완료" ? "tag-ok" : s === "반려" ? "tag-no" : s === "승인" ? "tag-ok" : s === "작성중" ? "tag-pin" : "tag-wait"}">${s}</span>`;
-    const upcoming = items
-      .filter((s) => s.status === "승인" && s.autoPublish && s.scheduledAt)
-      .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
-      .slice(0, 5);
     return `
       <div class="toolbar"><button class="btn btn-secondary" id="aiContentBtn">🤖 AI로 콘텐츠 만들기</button><button class="btn btn-primary" id="newSnsBtn">+ 콘텐츠 등록</button></div>
-      <p class="hint">✅ 예약 자동화: "자동 게시 처리"를 켜고 승인하면, 예정 시각이 되었을 때 앱이 열려있는 시점에 자동으로 "게시완료"로 바뀌고 캘린더에도 자동 등록돼요. (브라우저가 실제로 열려있어야 동작해요 — 완전한 백그라운드 자동 게시는 별도 서버 연동이 필요해요.)<br>🤖 AI로 콘텐츠 만들기: 주제만 입력하면 문구(무료 Gemini), 이미지(무료 Workers AI/Pollinations), 릴스 나레이션 음성(무료 Workers AI TTS)까지 만들어주고, 이미지 2장 이상이면 나레이션 길이에 맞춘 슬라이드쇼 동영상도 만들 수 있어요. 직접 찍은 사진/영상을 대신 첨부할 수도 있어요.<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 → 예약 자동화 워크플로우까지 지원해요.</p>
-      ${upcoming.length ? `
-      <div class="panel" style="margin-bottom:16px;">
-        <h3>🤖 자동 게시 예정</h3>
-        ${upcoming.map((s) => `<div class="list-row"><div><span class="tag">${esc(s.date)} ${esc(s.time || "")}</span> <span class="tag">${esc(s.platform)}</span> ${esc(s.title)}</div></div>`).join("")}
-      </div>` : ""}
+      <p class="hint">🤖 AI로 콘텐츠 만들기: 주제만 입력하면 문구(무료 Gemini), 이미지(무료 Workers AI/Pollinations), 릴스 나레이션 음성(무료 Workers AI TTS)까지 만들어주고, 이미지 2장 이상이면 나레이션 길이에 맞춘 슬라이드쇼 동영상도 만들 수 있어요. 직접 찍은 사진/영상을 대신 첨부할 수도 있어요.<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 워크플로우까지 지원해요. (게시는 승인 후 담당자가 직접 "게시완료 처리" 버튼을 눌러요.)</p>
       <div class="panel">
         ${items.length ? items.map((s) => `
           <div class="list-row expand" data-sns="${s.id}">
             <div>
               ${statusTag(s.status)}
               <span class="tag">${esc(s.platform)}</span>
-              ${s.autoPublish ? `<span class="tag tag-ok">🤖 자동게시</span>` : ""}
               <b>${esc(s.title)}</b>
               <span class="muted">담당 ${esc(s.assignee)} · 게시예정 ${esc(s.date)}${s.time ? " " + esc(s.time) : ""}</span>
               ${s.imageLinks && s.imageLinks.length > 1 ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">📰 게시물 ${s.imageLinks.length}장</a>` : s.imageLink ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">🖼 이미지</a>` : ""}
@@ -929,7 +921,6 @@ const Modules = {
         <label>담당자 이름 <input id="f_assignee"></label>
         <label>게시 예정일 <input type="date" id="f_date" value="${todayStr()}"></label>
         <label>게시 예정 시각 <input type="time" id="f_time" value="09:00"></label>
-        <label class="checkbox-label"><input type="checkbox" id="f_autoPublish" checked> 승인되면 예정 시각에 자동으로 "게시완료" 처리 + 캘린더 자동 등록</label>
         <label>승인자 이메일 <input id="f_approver" placeholder="approver@company.com"></label>
       </div>
       <div class="modal-actions">
@@ -966,7 +957,6 @@ const Modules = {
         <label>담당자 이름 <input id="ai_assignee" value="${esc(item.assignee || "")}"></label>
         <label>게시 예정일 <input type="date" id="ai_date" value="${esc(item.date || todayStr())}"></label>
         <label>게시 예정 시각 <input type="time" id="ai_time" value="${esc(item.time || "09:00")}"></label>
-        <label class="checkbox-label"><input type="checkbox" id="ai_autoPublish" ${item.autoPublish ? "checked" : ""}> 승인되면 예정 시각에 자동으로 "게시완료" 처리 + 캘린더 자동 등록</label>
         <label>승인자 이메일 <input id="ai_approver" value="${esc(item.approver || "")}" placeholder="approver@company.com"></label>
       </div>
 

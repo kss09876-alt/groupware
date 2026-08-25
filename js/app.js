@@ -17,7 +17,7 @@ let storyboardScenes = []; // 콘티(스토리보드) 장면들: [{sceneNumber, 
 // slides[0]은 항상 표지(로고 on/off + 하단 타이틀), 나머지는 콘텐츠 슬라이드(하단 좌측 제목+부제)예요.
 let postSlides = [];
 let postActiveSlideIdx = 0;
-let postActiveTab = "image"; // "image" | "logo" | "text" — 오른쪽 설정 패널에서 지금 열려있는 탭
+let postActiveTab = "text"; // "text" | "image" | "logo" — 오른쪽 설정 패널에서 지금 열려있는 탭 (텍스트를 먼저 입력하는 흐름이라 기본값은 텍스트)
 
 // 콘텐츠 스튜디오(팝업 대신 전용 페이지) 상태 — 지금 편집 중인 SNS 초안의 id와 자동저장 타이머
 let studioDraftId = null;
@@ -111,7 +111,6 @@ async function onSignedIn(user) {
   if (dataFolderId) {
     showScreen("app");
     await goTab("dashboard");
-    runSnsAutoPublish();
     return;
   }
 
@@ -127,7 +126,6 @@ async function onSignedIn(user) {
       localStorage.setItem("gw_folderId", dataFolderId);
       showScreen("app");
       await goTab("dashboard");
-      runSnsAutoPublish();
       return;
     }
   } catch (e) {
@@ -948,7 +946,6 @@ function bindTabEvents(tab) {
           date,
           time,
           scheduledAt: `${date}T${time}`,
-          autoPublish: $("#f_autoPublish").checked,
           calendarEventId: null,
           approver: $("#f_approver").value.trim(),
           status: "검토중",
@@ -1081,9 +1078,6 @@ async function decideSns(id, status) {
   if (!item) return;
   item.status = status;
   if (status === "게시완료") item.publishedAt = nowStr();
-  if (status === "승인" && item.autoPublish && item.scheduledAt) {
-    item.calendarEventId = await syncSnsCalendarEvent(item);
-  }
   if (status === "반려" && item.calendarEventId) {
     await removeSnsCalendarEvent(item.calendarEventId);
     item.calendarEventId = null;
@@ -1092,55 +1086,12 @@ async function decideSns(id, status) {
   refreshCurrentTab();
 }
 
-// ---------------- SNS 예약 자동화 ----------------
-// 승인 + "자동 게시 처리"가 켜진 콘텐츠는 캘린더에 자동으로 일정이 등록되고,
-// 예정 시각이 지나면(앱이 열려있는 시점 기준) 자동으로 "게시완료"로 바뀌어요.
-// 주의: 순수 프론트엔드 앱이라 브라우저 탭이 열려있어야 체크가 동작해요.
-// 완전한 백그라운드 자동 게시(실제 SNS 플랫폼 업로드 포함)는 별도의 서버(Cloudflare
-// Worker의 cron 트리거 등)와 각 플랫폼 API 연동이 필요해요 — 다음 단계 작업이에요.
-async function syncSnsCalendarEvent(item) {
-  const cal = await loadModule("calendar");
-  let ev = item.calendarEventId ? cal.items.find((e) => e.id === item.calendarEventId) : null;
-  if (!ev) {
-    ev = { id: uid(), source: "sns", sourceId: item.id };
-    cal.items.push(ev);
-  }
-  ev.title = `[SNS 예약] ${item.platform} · ${item.title}`;
-  ev.date = item.date;
-  ev.endDate = "";
-  ev.memo = item.time ? `${item.time} 자동 게시 예정` : "자동 게시 예정";
-  await saveModule("calendar", cal);
-  return ev.id;
-}
-
+// 콘텐츠를 삭제하거나 반려할 때, 혹시 남아있는 캘린더 일정을 같이 정리해요.
 async function removeSnsCalendarEvent(eventId) {
   const cal = await loadModule("calendar");
   cal.items = cal.items.filter((e) => e.id !== eventId);
   await saveModule("calendar", cal);
 }
-
-async function runSnsAutoPublish() {
-  if (!dataFolderId) return;
-  try {
-    const data = await loadModule("sns", true);
-    const now = new Date();
-    let changed = false;
-    for (const item of data.items) {
-      if (item.status === "승인" && item.autoPublish && item.scheduledAt && new Date(item.scheduledAt) <= now) {
-        item.status = "게시완료";
-        item.publishedAt = nowStr();
-        changed = true;
-      }
-    }
-    if (changed) {
-      await saveModule("sns", data);
-      if (["sns", "dashboard", "calendar"].includes(currentTab)) refreshCurrentTab();
-    }
-  } catch (e) {
-    console.error("SNS 자동 게시 확인 실패", e);
-  }
-}
-setInterval(runSnsAutoPublish, 5 * 60 * 1000);
 
 // ---------------- 오늘의 추천 (AI 콘텐츠 아이디어 브레인스토밍) ----------------
 // 외부 뉴스 API 없이, Worker가 Gemini에게 "아트아트(artart.today)" 스타일의
@@ -1222,7 +1173,6 @@ async function enterContentStudio(prefill) {
     date: todayStr(),
     time: "09:00",
     scheduledAt: `${todayStr()}T09:00`,
-    autoPublish: true,
     calendarEventId: null,
     approver: "",
     status: "작성중",
@@ -1254,7 +1204,6 @@ async function enterShortsStudio() {
     date: todayStr(),
     time: "09:00",
     scheduledAt: `${todayStr()}T09:00`,
-    autoPublish: true,
     calendarEventId: null,
     approver: "",
     status: "작성중",
@@ -1374,7 +1323,7 @@ function wireContentStudio() {
     refreshCurrentTab();
   });
 
-  ["ai_platform", "ai_title", "ai_assignee", "ai_date", "ai_time", "ai_autoPublish", "ai_approver", "ai_topic", "ai_tone", "ai_imgPrompt", "ai_script", "ai_caption"].forEach(
+  ["ai_platform", "ai_title", "ai_assignee", "ai_date", "ai_time", "ai_approver", "ai_topic", "ai_tone", "ai_imgPrompt", "ai_script", "ai_caption"].forEach(
     (id) => {
       const el = $("#" + id);
       if (!el) return;
@@ -1439,7 +1388,6 @@ async function saveStudioDraftNow() {
     item.date = $("#ai_date")?.value || item.date;
     item.time = $("#ai_time")?.value || item.time;
     item.scheduledAt = `${item.date}T${item.time}`;
-    item.autoPublish = $("#ai_autoPublish") ? $("#ai_autoPublish").checked : item.autoPublish;
     item.approver = $("#ai_approver")?.value.trim() || "";
     item.topic = $("#ai_topic")?.value || "";
     item.tone = $("#ai_tone")?.value || "";
@@ -1868,7 +1816,7 @@ function renderPostSlideList() {
 function postAddSlide() {
   postSlides.push(newContentSlide(postSlides.length));
   postActiveSlideIdx = postSlides.length - 1;
-  postActiveTab = "image";
+  postActiveTab = "text";
   renderPostSlideList();
   renderPostCanvasStage();
   renderPostTabPanel();
@@ -2011,6 +1959,7 @@ function postRecomposeActiveSlide() {
       if (s.rawImage) {
         try {
           s.composedDataUrl = await composePostSlide(s.rawImage, s);
+          schedulePostDriveSync();
         } catch (e) {
           console.error("게시물 슬라이드 합성 실패", e);
         }
@@ -2020,6 +1969,44 @@ function postRecomposeActiveSlide() {
       resolve();
     }, 200);
   });
+}
+
+// 슬라이드가 완성될 때마다(디바운스해서) 자동으로 드라이브에 저장해요 — 스튜디오에서
+// 나가거나 브라우저를 닫아도 만든 이미지가 드라이브에 남아있고, SNS 운영 목록에서 바로
+// 보고 다운로드할 수 있어요. 이미 올린 슬라이드는 새로 만들지 않고 같은 파일을 덮어써요.
+let postSyncTimer = null;
+function schedulePostDriveSync() {
+  clearTimeout(postSyncTimer);
+  postSyncTimer = setTimeout(postSyncToDrive, 1200);
+}
+
+async function postSyncToDrive() {
+  if (!studioDraftId || !dataFolderId) return;
+  const toSync = postSlides.filter((s) => s.composedDataUrl && s.composedDataUrl !== s._syncedDataUrl);
+  if (!toSync.length) return;
+  try {
+    for (const s of toSync) {
+      const blob = await (await fetch(s.composedDataUrl)).blob();
+      const file = new File([blob], `post_slide_${Date.now()}.png`, { type: blob.type || "image/png" });
+      const uploaded = await Drive.uploadDocument(dataFolderId, file, s.driveFileId || null);
+      s.driveFileId = uploaded.id;
+      s.driveLink = uploaded.webViewLink || "";
+      s._syncedDataUrl = s.composedDataUrl;
+    }
+    const data = await loadModule("sns", true);
+    const item = data.items.find((x) => x.id === studioDraftId);
+    if (item) {
+      const composed = postSlides.filter((s) => s.driveLink);
+      item.imageLinks = composed.map((s) => s.driveLink);
+      item.imageFileIds = composed.map((s) => s.driveFileId);
+      item.imageLink = item.imageLinks[0] || "";
+      item.imageFileId = item.imageFileIds[0] || "";
+      item.contentType = "post";
+      await saveModule("sns", data);
+    }
+  } catch (e) {
+    console.error("게시물 드라이브 자동 저장 실패", e);
+  }
 }
 
 let postImageBusy = false;
@@ -2131,30 +2118,6 @@ async function postSearchPexels() {
   }
 }
 
-// 완성된 슬라이드 이미지들을 드라이브에 순서대로 올리고, 그 링크 목록을 SNS 항목에 "게시물 세트"로 붙여요.
-async function attachPostSlidesToSnsItem(id, composedDataUrls) {
-  const data = await loadModule("sns", true);
-  const item = data.items.find((s) => s.id === id);
-  if (!item) return;
-  const links = [];
-  const fileIds = [];
-  for (const dataUrl of composedDataUrls) {
-    const blob = await (await fetch(dataUrl)).blob();
-    const file = new File([blob], `post_slide_${Date.now()}_${links.length}.png`, { type: blob.type || "image/png" });
-    const uploaded = await Drive.uploadDocument(dataFolderId, file);
-    links.push(uploaded.webViewLink || "");
-    fileIds.push(uploaded.id);
-  }
-  item.imageLinks = links;
-  item.imageFileIds = fileIds;
-  item.imageLink = links[0] || "";
-  item.imageFileId = fileIds[0] || "";
-  item.videoLink = "";
-  item.videoFileId = null;
-  item.contentType = "post";
-  await saveModule("sns", data);
-}
-
 async function enterPostStudio() {
   const data = await loadModule("sns");
   const item = {
@@ -2171,7 +2134,6 @@ async function enterPostStudio() {
     date: todayStr(),
     time: "09:00",
     scheduledAt: `${todayStr()}T09:00`,
-    autoPublish: true,
     calendarEventId: null,
     approver: "",
     status: "작성중",
@@ -2183,7 +2145,7 @@ async function enterPostStudio() {
   studioDraftId = item.id;
   postSlides = [newCoverSlide()];
   postActiveSlideIdx = 0;
-  postActiveTab = "image";
+  postActiveTab = "text";
   currentTab = "postStudio";
   $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === "postStudio"));
   $("#pageTitle").textContent = TAB_TITLES.postStudio;
@@ -2197,7 +2159,7 @@ async function continuePostDraft(id) {
   studioDraftId = id;
   postSlides = [newCoverSlide()];
   postActiveSlideIdx = 0;
-  postActiveTab = "image";
+  postActiveTab = "text";
   currentTab = "postStudio";
   $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === "postStudio"));
   $("#pageTitle").textContent = TAB_TITLES.postStudio;
@@ -2219,6 +2181,19 @@ function wirePostStudio() {
   );
   $("#ai_topic")?.addEventListener("input", scheduleStudioAutosave);
   $("#ai_approver")?.addEventListener("input", scheduleStudioAutosave);
+  $("#postDownloadBtn")?.addEventListener("click", () => {
+    const s = activePostSlide();
+    if (!s || !s.composedDataUrl) {
+      alert("먼저 이미지를 채워서 슬라이드를 완성해주세요.");
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = s.composedDataUrl;
+    a.download = `게시물_슬라이드_${postActiveSlideIdx + 1}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
   $("#postSubmitBtn")?.addEventListener("click", async () => {
     const missing = postSlides.filter((s) => !s.composedDataUrl);
     if (missing.length) {
@@ -2233,10 +2208,11 @@ function wirePostStudio() {
     const submitBtn = $("#postSubmitBtn");
     const statusEl = $("#postSubmitStatus");
     if (submitBtn) submitBtn.disabled = true;
-    if (statusEl) statusEl.textContent = "업로드 중...";
+    if (statusEl) statusEl.textContent = "드라이브에 저장 중...";
     try {
       const draftId = studioDraftId;
-      await attachPostSlidesToSnsItem(draftId, postSlides.map((s) => s.composedDataUrl));
+      clearTimeout(postSyncTimer);
+      await postSyncToDrive(); // 슬라이드는 만들 때마다 이미 자동 저장되지만, 마지막 변경분까지 확실히 반영해요.
       const data2 = await loadModule("sns", true);
       const item2 = data2.items.find((s) => s.id === draftId);
       if (item2) {
