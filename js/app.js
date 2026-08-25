@@ -207,6 +207,7 @@ const ctx = {
 // ---------------- 탭 전환 ----------------
 const TAB_TITLES = {
   dashboard: "대시보드",
+  issues: "오늘의 이슈",
   corp: "법인정보",
   notice: "공지사항",
   calendar: "일정/캘린더",
@@ -509,6 +510,10 @@ async function stampAndSaveDocumentAt(state) {
 function bindTabEvents(tab) {
   if (tab === "dashboard") {
     $$("[data-quick]").forEach((b) => b.addEventListener("click", () => goTab(b.dataset.quick)));
+  }
+
+  if (tab === "issues") {
+    $("#fetchIssuesBtn")?.addEventListener("click", fetchDailyIssues);
   }
 
   if (tab === "corp") {
@@ -1167,6 +1172,66 @@ async function fetchDailyTrends() {
     if (resultEl) resultEl.innerHTML = `<div class="empty">아이디어 생성에 실패했어요: ${esc(e.message)}</div>`;
     btn.disabled = false;
     btn.textContent = originalText;
+  }
+}
+
+// ---------------- 오늘의 이슈 (데일리 뉴스 + 날씨) ----------------
+// 뉴스: 네이버 뉴스 검색 API(한국 뉴스에 특화, 무료), 날씨: OpenWeatherMap(무료 티어) —
+// 둘 다 Cloudflare Worker(/daily-news, /daily-weather)를 통해 키를 숨긴 채 호출해요.
+// 하루 한 번씩만 새로 받아오면 되니, sns.dailyTrends처럼 날짜와 함께 캐시해둬요.
+async function fetchDailyIssues() {
+  const btn = $("#fetchIssuesBtn");
+  const statusEl = $("#issuesStatus");
+  const keywords = $("#issuesKeywords")?.value.trim() || "";
+  const city = $("#issuesCity")?.value.trim() || "";
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  if (!keywords) {
+    alert("관심 키워드를 먼저 입력해주세요.");
+    return;
+  }
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.textContent = "가져오는 중...";
+  try {
+    const newsRes = await fetch(CONFIG.AI_WORKER_URL + "/daily-news", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: keywords, display: 10 }),
+    });
+    const newsData = await newsRes.json().catch(() => null);
+    if (!newsRes.ok || !newsData || newsData.error) {
+      throw new Error((newsData && (newsData.detail || newsData.error)) || "뉴스 서버 오류 (" + newsRes.status + ")");
+    }
+
+    let weather = null;
+    if (city) {
+      try {
+        const weatherRes = await fetch(CONFIG.AI_WORKER_URL + "/daily-weather", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ city }),
+        });
+        const weatherData = await weatherRes.json().catch(() => null);
+        if (weatherRes.ok && weatherData && !weatherData.error) weather = weatherData;
+      } catch (e) {
+        // 날씨는 부가 정보라, 실패해도 뉴스는 그대로 보여줘요.
+      }
+    }
+
+    const data = await loadModule("issues", true);
+    data.keywords = keywords;
+    data.city = city;
+    data.date = todayStr();
+    data.news = newsData.items || [];
+    data.weather = weather;
+    await saveModule("issues", data);
+    refreshCurrentTab();
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "";
+    if (btn) btn.disabled = false;
+    alert("오늘의 이슈를 가져오는 데 실패했어요: " + e.message);
   }
 }
 

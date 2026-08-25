@@ -7,6 +7,7 @@ const FILES = {
   approval: "approvals.json",
   attendance: "attendance.json",
   sns: "sns.json",
+  issues: "issues.json",
 };
 
 const DEFAULTS = {
@@ -64,6 +65,13 @@ const DEFAULTS = {
     goals: { dailyFollowerGoal: "50", dailyViewGoal: "500" },
     dailyTrends: { date: "", items: [], businessContext: "" },
   },
+  issues: {
+    keywords: "",
+    city: "",
+    date: "",
+    news: [],
+    weather: null,
+  },
 };
 
 // 예전에 저장된 corp.json(구버전 스키마)을 불러와도 깨지지 않도록,
@@ -118,13 +126,15 @@ function esc(s) {
 const Modules = {
   // ---------------- 대시보드 ----------------
   async dashboard(ctx) {
-    const [notice, cal, appr, att, sns] = await Promise.all([
+    const [notice, cal, appr, att, sns, issues] = await Promise.all([
       ctx.load("notice"),
       ctx.load("calendar"),
       ctx.load("approval"),
       ctx.load("attendance"),
       ctx.load("sns"),
+      ctx.load("issues"),
     ]);
+    const issuesIsToday = issues.date === todayStr();
     const myPendingApprovals = appr.items.filter((a) => a.status === "대기" && a.approver === ctx.user.email).length;
     const upcoming = cal.items
       .filter((e) => e.date >= todayStr())
@@ -162,10 +172,94 @@ const Modules = {
           ${recentNotices.length ? recentNotices.map((n) => `<div class="list-row"><span class="tag">${esc(n.date)}</span>${esc(n.title)}</div>`).join("") : `<div class="empty">등록된 공지가 없어요.</div>`}
         </div>
       </div>
+      <div class="panel">
+        <h3>오늘의 이슈</h3>
+        ${
+          issuesIsToday
+            ? `
+          ${issues.weather ? `<div class="list-row"><div><span class="tag">날씨</span> ${esc(issues.weather.city || "")} ${issues.weather.temp}°C · ${esc(issues.weather.description || "")}</div></div>` : ""}
+          ${
+            issues.news.length
+              ? issues.news.slice(0, 3).map((n) => `<div class="list-row"><div><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a></div></div>`).join("")
+              : `<div class="empty">뉴스를 찾지 못했어요.</div>`
+          }`
+            : `<div class="empty">아직 오늘의 이슈를 가져오지 않았어요.</div>`
+        }
+        <div class="modal-actions" style="justify-content:flex-start; margin-top:8px;">
+          <button class="btn btn-secondary btn-tiny" data-quick="issues">오늘의 이슈 보러가기</button>
+        </div>
+      </div>
       <div class="quick-actions">
         <button class="btn btn-primary" data-quick="attendance">출퇴근 체크하기</button>
         <button class="btn btn-secondary" data-quick="approval">결재 올리기</button>
         <button class="btn btn-secondary" data-quick="notice">공지 작성하기</button>
+      </div>
+    `;
+  },
+
+  // ---------------- 오늘의 이슈 (데일리 뉴스 + 날씨 + 나에게 맞춤 정보) ----------------
+  // 뉴스는 네이버 뉴스 검색 API(관심 키워드 기준), 날씨는 OpenWeatherMap을 Cloudflare
+  // Worker에서 대신 호출해와요. 그 외 "일정/결재/SNS/근태" 요약은 이미 앱에 있는
+  // 데이터를 그대로 모아 보여주는 거라 별도 API가 필요없어요.
+  async issues(ctx) {
+    const data = await ctx.load("issues");
+    const isToday = data.date === todayStr();
+    const [cal, appr, att, sns] = await Promise.all([
+      ctx.load("calendar"),
+      ctx.load("approval"),
+      ctx.load("attendance"),
+      ctx.load("sns"),
+    ]);
+    const today = todayStr();
+    const todayEvents = cal.items.filter((e) => e.date === today);
+    const myPending = appr.items.filter((a) => a.status === "대기" && a.approver === ctx.user.email);
+    const todaySns = sns.items.filter((s) => s.date === today && s.status !== "게시완료");
+    const myLeavesPending = (att.leaves || []).filter((l) => l.status === "대기").length;
+    const weather = isToday ? data.weather : null;
+
+    return `
+      <div class="panel">
+        <h3>오늘의 이슈 설정</h3>
+        <p class="hint">관심 키워드로 관련 뉴스를 찾아드리고, 도시를 입력하면 오늘의 날씨도 보여드려요.</p>
+        <div class="form-grid">
+          <label>관심 키워드 (쉼표로 여러 개) <input id="issuesKeywords" value="${esc(data.keywords || "")}" placeholder="예: 스타트업, 우리 업종, 마케팅"></label>
+          <label>도시(날씨) <input id="issuesCity" value="${esc(data.city || "")}" placeholder="예: 서울"></label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="fetchIssuesBtn">${isToday && data.news.length ? "새로고침" : "오늘의 이슈 가져오기"}</button>
+          <span id="issuesStatus" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="panel">
+          <h3>오늘 나에게 필요한 것</h3>
+          ${
+            weather
+              ? `<div class="list-row"><div><span class="tag">날씨</span> ${esc(weather.city || "")} ${weather.temp}°C (체감 ${weather.feelsLike}°C) · ${esc(weather.description || "")}</div></div>`
+              : `<div class="list-row"><div class="muted">도시를 입력하고 새로고침하면 오늘 날씨를 보여드려요.</div></div>`
+          }
+          <div class="list-row"><div><span class="tag">일정</span> 오늘 일정 ${todayEvents.length}건${todayEvents.length ? " — " + todayEvents.map((e) => esc(e.title)).join(", ") : ""}</div></div>
+          <div class="list-row"><div><span class="tag">결재</span> 내가 결재할 문서 ${myPending.length}건</div></div>
+          <div class="list-row"><div><span class="tag">SNS</span> 오늘 게시 예정 ${todaySns.length}건</div></div>
+          ${myLeavesPending ? `<div class="list-row"><div><span class="tag">근태</span> 승인 대기 휴가 신청 ${myLeavesPending}건</div></div>` : ""}
+        </div>
+        <div class="panel">
+          <h3>오늘의 뉴스</h3>
+          ${
+            isToday && data.news.length
+              ? data.news
+                  .map(
+                    (n) => `
+              <div class="list-row"><div>
+                <a href="${esc(n.link)}" target="_blank" rel="noopener"><b>${esc(n.title)}</b></a>
+                <div class="muted" style="font-size:12.5px; margin-top:2px;">${esc(n.description)}</div>
+              </div></div>`
+                  )
+                  .join("")
+              : `<div class="empty">${isToday ? "뉴스를 찾지 못했어요." : "아직 오늘의 뉴스를 가져오지 않았어요. 위에서 키워드를 입력하고 가져와주세요."}</div>`
+          }
+        </div>
       </div>
     `;
   },
