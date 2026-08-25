@@ -1623,8 +1623,15 @@ function wrapTextLines(ctx, text, maxWidth, maxLines) {
   return lines.slice(0, maxLines);
 }
 
-// 사진 위에 "지금 99%가 모르는..." 스타일의 카드뉴스 자막(상단 검은 띠 + 큼직한 타이틀)을 합성해요.
-async function composeTitleOverlay(imageDataUrl, titleText, fontSizePx, color) {
+// 사진 위에 "지금 99%가 모르는..." 스타일의 카드뉴스 자막을 합성해요.
+// opts로 위치(상단/중앙/하단)·글자색·배경색·자간까지 세부 조절할 수 있어요.
+// (구버전 호출 호환: composeTitleOverlay(url, title, 48, "#fff") 형태도 계속 지원해요.)
+function defaultTitleStyle() {
+  return { fontSize: 48, color: "#ffffff", bgColor: "#0b0b0b", position: "top", letterSpacing: 0 };
+}
+
+async function composeTitleOverlay(imageDataUrl, titleText, opts, legacyColor) {
+  const o = typeof opts === "object" && opts !== null ? opts : { fontSize: opts, color: legacyColor };
   const img = await loadImageEl(imageDataUrl);
   const W = 720,
     H = 900;
@@ -1632,8 +1639,13 @@ async function composeTitleOverlay(imageDataUrl, titleText, fontSizePx, color) {
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
-  const fontSize = Math.max(20, Number(fontSizePx) || 48);
-  const textColor = color || "#ffffff";
+  const fontSize = Math.max(20, Number(o.fontSize) || 48);
+  const textColor = o.color || "#ffffff";
+  const bgColor = o.bgColor || "#0b0b0b";
+  const position = o.position || "top"; // "top" | "middle" | "bottom"
+  const letterSpacing = Number(o.letterSpacing) || 0;
+  if ("letterSpacing" in ctx) ctx.letterSpacing = `${letterSpacing}px`;
+
   ctx.font = `bold ${fontSize}px sans-serif`;
   const maxTextWidth = W - 60;
   const lineHeight = fontSize * 1.25;
@@ -1641,25 +1653,28 @@ async function composeTitleOverlay(imageDataUrl, titleText, fontSizePx, color) {
   const bandPadding = 36;
   const bandHeight = Math.min(H * 0.6, Math.max(140, lines.length * lineHeight + bandPadding * 2));
 
-  ctx.fillStyle = "#0b0b0b";
-  ctx.fillRect(0, 0, W, bandHeight);
-
-  const photoH = H - bandHeight;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, bandHeight, W, photoH);
-  ctx.clip();
-  const scale = Math.max(W / img.width, photoH / img.height);
+  // 사진은 항상 전체 캔버스를 채우도록 먼저 그려요.
+  const scale = Math.max(W / img.width, H / img.height);
   const dw = img.width * scale,
     dh = img.height * scale;
-  ctx.drawImage(img, (W - dw) / 2, bandHeight + (photoH - dh) / 2, dw, dh);
-  ctx.restore();
+  ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+
+  let bandY;
+  if (position === "bottom") bandY = H - bandHeight;
+  else if (position === "middle") bandY = (H - bandHeight) / 2;
+  else bandY = 0; // top
+
+  // 중앙/하단 배치는 사진이 이미 다 보이므로 띠에 살짝 투명도를 줘서 카드뉴스 느낌은 유지하되 사진도 함께 보이게 해요.
+  ctx.fillStyle = bgColor;
+  ctx.globalAlpha = position === "top" ? 1 : 0.78;
+  ctx.fillRect(0, bandY, W, bandHeight);
+  ctx.globalAlpha = 1;
 
   ctx.fillStyle = textColor;
   ctx.font = `bold ${fontSize}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
-  const startY = (bandHeight - lines.length * lineHeight) / 2 + fontSize * 0.85;
+  const startY = bandY + (bandHeight - lines.length * lineHeight) / 2 + fontSize * 0.85;
   lines.forEach((l, i) => ctx.fillText(l, W / 2, startY + i * lineHeight));
 
   return canvas.toDataURL("image/png");
@@ -1677,7 +1692,7 @@ async function composeCardImage() {
   const color = $("#ai_cardColor")?.value || "#ffffff";
   statusEl.textContent = "합성 중...";
   try {
-    const composed = await composeTitleOverlay(aiSelectedImageDataUrl, title, fontSize, color);
+    const composed = await composeTitleOverlay(aiSelectedImageDataUrl, title, { fontSize, color });
     aiGalleryImages.push(composed);
     aiSelectedImageDataUrl = composed;
     renderAiGallery();
@@ -1730,7 +1745,13 @@ async function generateStoryboard() {
     if (!res.ok || !data || data.error) {
       throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
     }
-    storyboardScenes = (data.scenes || []).map((s) => ({ ...s, mediaDataUrl: null, composedDataUrl: null }));
+    const baseFontSize = Number($("#ai_titleFontSize")?.value) || 48;
+    storyboardScenes = (data.scenes || []).map((s) => ({
+      ...s,
+      mediaDataUrl: null,
+      composedDataUrl: null,
+      titleStyle: { ...defaultTitleStyle(), fontSize: baseFontSize },
+    }));
     renderStoryboard();
     const row = $("#storyboardAssembleRow");
     if (row) row.style.display = "flex";
@@ -1761,6 +1782,19 @@ function renderStoryboard() {
         <input data-scene-field="titleText" data-scene-idx="${i}" value="${escHtml(s.titleText)}">
       </label>
       <p class="hint" style="margin:6px 0;">🔎 ${escHtml(s.imageKeyword)}</p>
+      <div class="scene-style-row">
+        <label>위치
+          <span class="scene-pos-btns">
+            <button type="button" class="scene-pos-btn${(s.titleStyle?.position || "top") === "top" ? " active" : ""}" data-scene-pos="${i}" data-pos-val="top">상단</button>
+            <button type="button" class="scene-pos-btn${(s.titleStyle?.position || "top") === "middle" ? " active" : ""}" data-scene-pos="${i}" data-pos-val="middle">중앙</button>
+            <button type="button" class="scene-pos-btn${(s.titleStyle?.position || "top") === "bottom" ? " active" : ""}" data-scene-pos="${i}" data-pos-val="bottom">하단</button>
+          </span>
+        </label>
+        <label>크기 <input type="range" min="20" max="90" data-scene-fontsize="${i}" value="${Number(s.titleStyle?.fontSize) || 48}"></label>
+        <label>자간 <input type="range" min="-2" max="12" data-scene-ls="${i}" value="${Number(s.titleStyle?.letterSpacing) || 0}"></label>
+        <label>글자색 <input type="color" data-scene-color="${i}" value="${s.titleStyle?.color || "#ffffff"}"></label>
+        <label>배경색 <input type="color" data-scene-bgcolor="${i}" value="${s.titleStyle?.bgColor || "#0b0b0b"}"></label>
+      </div>
       <div class="modal-actions" style="justify-content:flex-start;">
         <button class="btn btn-secondary btn-tiny" data-scene-ai="${i}">🎨 AI 이미지</button>
         <button class="btn btn-secondary btn-tiny" data-scene-pexels="${i}">📷 Pexels 추천</button>
@@ -1777,6 +1811,7 @@ function renderStoryboard() {
     f.addEventListener("input", () => {
       const i = Number(f.dataset.sceneIdx);
       storyboardScenes[i][f.dataset.sceneField] = f.value;
+      if (f.dataset.sceneField === "titleText") sceneRecompose(i);
     })
   );
   $$("[data-scene-ai]", el).forEach((b) => b.addEventListener("click", () => sceneGenerateAiImage(Number(b.dataset.sceneAi))));
@@ -1790,6 +1825,67 @@ function renderStoryboard() {
       await sceneSetMedia(i, dataUrl);
     })
   );
+
+  // 장면별 자막 위치/크기/자간/색상 컨트롤 — 값이 바뀌면 이미 골라둔 사진 위에 즉시 다시 합성해요.
+  $$("[data-scene-pos]", el).forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.scenePos);
+      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
+      storyboardScenes[i].titleStyle.position = btn.dataset.posVal;
+      $$(`[data-scene-pos="${i}"]`, el).forEach((b) => b.classList.toggle("active", b === btn));
+      sceneRecompose(i);
+    })
+  );
+  $$("[data-scene-fontsize]", el).forEach((inp) =>
+    inp.addEventListener("input", () => {
+      const i = Number(inp.dataset.sceneFontsize);
+      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
+      storyboardScenes[i].titleStyle.fontSize = Number(inp.value);
+      sceneRecompose(i);
+    })
+  );
+  $$("[data-scene-ls]", el).forEach((inp) =>
+    inp.addEventListener("input", () => {
+      const i = Number(inp.dataset.sceneLs);
+      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
+      storyboardScenes[i].titleStyle.letterSpacing = Number(inp.value);
+      sceneRecompose(i);
+    })
+  );
+  $$("[data-scene-color]", el).forEach((inp) =>
+    inp.addEventListener("input", () => {
+      const i = Number(inp.dataset.sceneColor);
+      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
+      storyboardScenes[i].titleStyle.color = inp.value;
+      sceneRecompose(i);
+    })
+  );
+  $$("[data-scene-bgcolor]", el).forEach((inp) =>
+    inp.addEventListener("input", () => {
+      const i = Number(inp.dataset.sceneBgcolor);
+      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
+      storyboardScenes[i].titleStyle.bgColor = inp.value;
+      sceneRecompose(i);
+    })
+  );
+}
+
+// 이미 원본 사진이 골라져 있는 장면의 자막 스타일이 바뀌면, 저장해둔 원본으로 다시 합성만 해요(재검색/재생성 없이).
+let sceneRecomposeTimers = {};
+function sceneRecompose(i) {
+  const scene = storyboardScenes[i];
+  if (!scene || !scene.mediaDataUrl) return; // 아직 사진을 안 골랐으면 합성할 게 없어요.
+  clearTimeout(sceneRecomposeTimers[i]);
+  sceneRecomposeTimers[i] = setTimeout(async () => {
+    try {
+      const composed = await composeTitleOverlay(scene.mediaDataUrl, scene.titleText, scene.titleStyle || defaultTitleStyle());
+      scene.composedDataUrl = composed;
+      const previewEl = $(`[data-scene-preview="${i}"]`);
+      if (previewEl) previewEl.innerHTML = `<img src="${composed}" style="max-width:160px; border-radius:8px; margin-top:6px;">`;
+    } catch (e) {
+      // 미리보기 재합성 실패는 조용히 무시해요(다음 편집 때 다시 시도돼요).
+    }
+  }, 250);
 }
 
 // 선택된 원본 이미지에 그 장면의 타이틀 자막을 입혀서 미리보기와 상태를 갱신해요.
@@ -1797,8 +1893,8 @@ async function sceneSetMedia(i, rawDataUrl) {
   const statusEl = $(`[data-scene-status="${i}"]`);
   if (statusEl) statusEl.textContent = "자막 합성 중...";
   try {
-    const fontSize = $("#ai_titleFontSize")?.value || 48;
-    const composed = await composeTitleOverlay(rawDataUrl, storyboardScenes[i].titleText, fontSize, "#ffffff");
+    storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
+    const composed = await composeTitleOverlay(rawDataUrl, storyboardScenes[i].titleText, storyboardScenes[i].titleStyle);
     storyboardScenes[i].mediaDataUrl = rawDataUrl;
     storyboardScenes[i].composedDataUrl = composed;
     const previewEl = $(`[data-scene-preview="${i}"]`);

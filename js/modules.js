@@ -663,8 +663,9 @@ const Modules = {
       <div id="shortsStep2" class="panel" style="display:none;">
         <h3>2. 장면별 이미지를 골라주세요</h3>
         <p class="hint">각 장면 아래에서 🎨 AI 이미지 / 📷 Pexels 추천 / 📎 업로드 중 골라주세요. 고르면 그 장면 자막이 자동으로 사진 위에 합성돼요.</p>
+        <p class="hint">장면마다 자막 위치·크기·색상을 따로 조절할 수 있어요. 아래 "기본값"은 새로 만드는 장면에만 적용돼요.</p>
         <div class="modal-actions" style="justify-content:flex-start;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">장면 자막 글자 크기 <input type="range" id="ai_titleFontSize" min="28" max="72" value="48"></label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">기본 글자 크기 <input type="range" id="ai_titleFontSize" min="28" max="72" value="48"></label>
         </div>
         <div id="storyboardScenes"></div>
         <div class="modal-actions">

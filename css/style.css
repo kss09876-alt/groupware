@@ -203,6 +203,21 @@ input, select, textarea { font-family: inherit; }
 .shorts-step-dot.active { background: var(--primary); color: #fff; }
 .shorts-step-dot.done { background: #e3f7ee; color: var(--ok); }
 
+.scene-style-row {
+  display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+  margin: 8px 0; padding: 10px; background: #fff; border: 1px dashed var(--border, #e5e5ea); border-radius: 8px;
+}
+.scene-style-row label { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.scene-style-row input[type="range"] { width: 70px; }
+.scene-style-row input[type="color"] { width: 26px; height: 22px; padding: 0; border: 1px solid var(--border, #e5e5ea); border-radius: 4px; cursor: pointer; }
+.scene-style-row select { font-size: 11.5px; padding: 3px 4px; border-radius: 6px; border: 1px solid var(--border, #e5e5ea); }
+.scene-pos-btns { display: flex; gap: 3px; }
+.scene-pos-btn {
+  font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border, #e5e5ea);
+  background: #f4f4f8; color: var(--muted); cursor: pointer; font-weight: 700;
+}
+.scene-pos-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
 .panel {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 18px 20px;
