@@ -218,6 +218,61 @@ input, select, textarea { font-family: inherit; }
 }
 .scene-pos-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
+/* 게시물 스튜디오: 왼쪽 슬라이드 목록 / 가운데 미리보기 / 오른쪽 탭형 설정 패널의 3단 편집기 */
+.post-editor {
+  display: grid;
+  grid-template-columns: 130px minmax(240px, 340px) 1fr;
+  gap: 16px;
+  margin-top: 14px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .post-editor { grid-template-columns: 1fr; }
+}
+.post-slide-list { display: flex; flex-direction: column; gap: 8px; }
+.post-slide-thumb {
+  position: relative; border: 2px solid var(--border, #e5e5ea); border-radius: 10px; overflow: hidden;
+  cursor: pointer; aspect-ratio: 4 / 5; background: #f4f4f8; display: flex; align-items: center; justify-content: center;
+}
+.post-slide-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.post-slide-thumb.active { border-color: var(--primary); }
+.post-slide-thumb-label {
+  position: absolute; top: 4px; left: 4px; background: rgba(0,0,0,0.6); color: #fff;
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 20px;
+}
+.post-slide-thumb-empty { font-size: 11px; color: var(--muted); text-align: center; padding: 6px; }
+.post-slide-remove {
+  position: absolute; top: 3px; right: 3px; background: rgba(0,0,0,0.65); color: #fff; border: none;
+  border-radius: 50%; width: 18px; height: 18px; font-size: 11px; line-height: 18px; cursor: pointer; padding: 0;
+}
+.post-add-slide-btn {
+  border: 1px dashed var(--border, #e5e5ea); border-radius: 10px; background: #fff; color: var(--muted);
+  padding: 10px 4px; font-size: 12px; font-weight: 700; cursor: pointer; aspect-ratio: 4 / 5;
+}
+.post-canvas-stage {
+  position: relative; aspect-ratio: 4 / 5; background: #111; border-radius: 12px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.post-canvas-stage img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.post-canvas-empty { color: #999; font-size: 12.5px; text-align: center; padding: 20px; }
+.post-carousel-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; border-radius: 50%;
+  background: rgba(255,255,255,0.85); border: none; font-size: 15px; cursor: pointer; color: #222;
+}
+.post-carousel-arrow.prev { left: 8px; }
+.post-carousel-arrow.next { right: 8px; }
+.post-carousel-dots { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; justify-content: center; gap: 5px; }
+.post-carousel-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.5); }
+.post-carousel-dots span.active { background: #fff; }
+.post-settings-panel { display: flex; flex-direction: column; gap: 10px; }
+.post-tabs { display: flex; gap: 6px; }
+.post-tab-btn {
+  flex: 1; padding: 8px 4px; border-radius: 8px; border: 1px solid var(--border, #e5e5ea);
+  background: #f4f4f8; color: var(--muted); font-size: 12.5px; font-weight: 700; cursor: pointer;
+}
+.post-tab-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.post-tab-panel { border: 1px solid var(--border, #e5e5ea); border-radius: 10px; padding: 12px; background: #fafafc; min-height: 160px; }
+
 .panel {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 18px 20px;

@@ -713,6 +713,54 @@ const Modules = {
     `;
   },
 
+  // ---------------- 게시물 스튜디오 (캐러셀/카드뉴스형 일반 게시물 전용, 릴스와 별도) ----------------
+  // 표지(로고 on/off + 하단 타이틀) 1장 + 콘텐츠 슬라이드(하단 좌측 제목/부제) 여러 장을
+  // 만들어서 "여러 장 넘겨보는 게시물" 세트로 등록해요. 오른쪽 탭(이미지/로고/텍스트)에서
+  // 지금 고른 슬라이드를 편집하면 가운데 미리보기가 바로 갱신돼요.
+  async postStudio(ctx) {
+    const data = await ctx.load("sns");
+    const item = data.items.find((s) => s.id === ctx.studioDraftId);
+    if (!item) {
+      return `<div class="empty">게시물 초안을 준비하고 있어요. 잠시 후 다시 시도해주세요.</div>`;
+    }
+    return `
+      <div class="toolbar" style="justify-content:space-between;">
+        <span class="muted">여러 장을 넘겨보는 "캐러셀형" 일반 게시물을 만들어요 (릴스와는 별도예요).</span>
+        <span id="studioSaveStatus" class="muted">자동 저장됨</span>
+      </div>
+      <div class="panel">
+        <h3>📰 게시물 스튜디오</h3>
+        <div class="form-grid">
+          <label>주제/제목 <input id="ai_topic" value="${esc(item.topic || "")}" placeholder="예: 이달의 추천템 5가지"></label>
+          <label>승인자 이메일 <input id="ai_approver" value="${esc(item.approver || "")}" placeholder="approver@company.com"></label>
+        </div>
+
+        <div class="post-editor">
+          <div class="post-slide-list" id="postSlideList"></div>
+          <div class="post-canvas-stage" id="postCanvasStage"></div>
+          <div class="post-settings-panel">
+            <div class="post-tabs" id="postTabs">
+              <button class="post-tab-btn" data-post-tab="image">🖼 이미지</button>
+              <button class="post-tab-btn" data-post-tab="logo" id="postLogoTabBtn">🔖 로고</button>
+              <button class="post-tab-btn" data-post-tab="text">✏️ 텍스트</button>
+            </div>
+            <div id="postTabPanel" class="post-tab-panel"></div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="postSubmitBtn">검토요청으로 등록</button>
+          <span id="postSubmitStatus" class="muted"></span>
+        </div>
+      </div>
+
+      <!-- 자동저장 로직이 공통으로 참조하는 숨은 필드예요 -->
+      <div style="display:none;">
+        <input id="ai_platform" value="${esc(item.platform || "인스타그램")}">
+      </div>
+    `;
+  },
+
   snsContentBody(data) {
     const items = [...data.items].sort((a, b) => (a.scheduledAt || a.date).localeCompare(b.scheduledAt || b.date));
     const statusTag = (s) => `<span class="tag ${s === "게시완료" ? "tag-ok" : s === "반려" ? "tag-no" : s === "승인" ? "tag-ok" : s === "작성중" ? "tag-pin" : "tag-wait"}">${s}</span>`;
@@ -737,7 +785,7 @@ const Modules = {
               ${s.autoPublish ? `<span class="tag tag-ok">🤖 자동게시</span>` : ""}
               <b>${esc(s.title)}</b>
               <span class="muted">담당 ${esc(s.assignee)} · 게시예정 ${esc(s.date)}${s.time ? " " + esc(s.time) : ""}</span>
-              ${s.imageLink ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">🖼 이미지</a>` : ""}
+              ${s.imageLinks && s.imageLinks.length > 1 ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">📰 게시물 ${s.imageLinks.length}장</a>` : s.imageLink ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">🖼 이미지</a>` : ""}
               ${s.videoLink ? `<a href="${esc(s.videoLink)}" target="_blank" rel="noopener" class="tag">🎬 동영상</a>` : ""}
             </div>
             <span>

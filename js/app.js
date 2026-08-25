@@ -13,6 +13,12 @@ let aiVideoBlob = null; // 생성된 슬라이드쇼 동영상
 let aiNarrationBlob = null; // 생성된 릴스 나레이션 음성(mp3)
 let storyboardScenes = []; // 콘티(스토리보드) 장면들: [{sceneNumber, narration, titleText, imageKeyword, mediaDataUrl, composedDataUrl}]
 
+// 게시물 스튜디오(캐러셀/카드뉴스형 일반 게시물 전용) 상태 — 릴스(쇼츠)와는 별도로 관리해요.
+// slides[0]은 항상 표지(로고 on/off + 하단 타이틀), 나머지는 콘텐츠 슬라이드(하단 좌측 제목+부제)예요.
+let postSlides = [];
+let postActiveSlideIdx = 0;
+let postActiveTab = "image"; // "image" | "logo" | "text" — 오른쪽 설정 패널에서 지금 열려있는 탭
+
 // 콘텐츠 스튜디오(팝업 대신 전용 페이지) 상태 — 지금 편집 중인 SNS 초안의 id와 자동저장 타이머
 let studioDraftId = null;
 let studioSaveTimer = null;
@@ -207,14 +213,17 @@ const TAB_TITLES = {
   attendance: "근태관리",
   sns: "SNS 운영",
   shorts: "쇼츠 스튜디오",
+  postStudio: "게시물 스튜디오",
 };
 
 $$(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => {
-    // 쇼츠 스튜디오는 일반 탭과 달리, 들어가는 순간 "작성중" 초안을 바로 만들어서
+    // 쇼츠/게시물 스튜디오는 일반 탭과 달리, 들어가는 순간 "작성중" 초안을 바로 만들어서
     // 실시간으로 저장되기 시작해야 하니 별도 진입 함수를 써요.
     if (btn.dataset.tab === "shorts") {
       enterShortsStudio();
+    } else if (btn.dataset.tab === "postStudio") {
+      enterPostStudio();
     } else {
       goTab(btn.dataset.tab);
     }
@@ -960,9 +969,15 @@ function bindTabEvents(tab) {
     $$("[data-sns-continue]").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        studioDraftId = b.dataset.snsContinue;
-        snsSubTab = "studio";
-        refreshCurrentTab();
+        const id = b.dataset.snsContinue;
+        const item = cache.sns?.items.find((s) => s.id === id);
+        if (item && item.contentType === "post") {
+          continuePostDraft(id);
+        } else {
+          studioDraftId = id;
+          snsSubTab = "studio";
+          refreshCurrentTab();
+        }
       })
     );
     $$("[data-sns]").forEach((row) =>
@@ -1704,6 +1719,541 @@ async function composeCardImage() {
     statusEl.textContent = "";
     alert("합성에 실패했어요: " + e.message);
   }
+}
+
+// ============================================================
+// 게시물 스튜디오 — 여러 장을 넘겨보는 "캐러셀형" 일반 게시물 전용 (릴스/쇼츠와는 완전히 별도 흐름)
+// slides[0]은 표지(로고 on/off + 하단 타이틀), 나머지는 콘텐츠 슬라이드(하단 좌측 제목+부제)예요.
+// ============================================================
+
+function newCoverSlide() {
+  return {
+    kind: "cover",
+    rawImage: null,
+    composedDataUrl: null,
+    logoDataUrl: null,
+    logoEnabled: false,
+    logoPosition: "top-left",
+    heading: "",
+    subheading: "",
+    fontSize: 40,
+    headingColor: "#ffffff",
+    subColor: "#ffffff",
+  };
+}
+
+function newContentSlide(n) {
+  return {
+    kind: "content",
+    rawImage: null,
+    composedDataUrl: null,
+    heading: `슬라이드 ${n}`,
+    subheading: "",
+    fontSize: 34,
+    headingColor: "#ffffff",
+    subColor: "#ffffff",
+  };
+}
+
+// 사진 전체를 꽉 채우고, 하단에 가독성용 그라디언트 + (표지면) 로고 + 좌측 하단 제목/부제를 얹어요.
+// composeTitleOverlay(카드뉴스용 상단/중앙/하단 띠)와는 다른, "코너 캡션" 스타일이에요.
+async function composePostSlide(imageDataUrl, opts) {
+  const img = await loadImageEl(imageDataUrl);
+  const W = 720,
+    H = 900;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const scale = Math.max(W / img.width, H / img.height);
+  const dw = img.width * scale,
+    dh = img.height * scale;
+  ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+
+  // 어떤 사진이 와도 텍스트가 잘 읽히도록 하단에 자연스러운 그라디언트를 깔아요.
+  const grad = ctx.createLinearGradient(0, H * 0.4, 0, H);
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(1, "rgba(0,0,0,0.8)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, H * 0.4, W, H * 0.6);
+
+  if (opts.logoEnabled && opts.logoDataUrl) {
+    try {
+      const logoImg = await loadImageEl(opts.logoDataUrl);
+      const maxLogoW = 100;
+      const lscale = Math.min(1, maxLogoW / logoImg.width);
+      const lw = logoImg.width * lscale,
+        lh = logoImg.height * lscale;
+      const pad = 24;
+      let lx = pad;
+      if (opts.logoPosition === "top-center") lx = (W - lw) / 2;
+      else if (opts.logoPosition === "top-right") lx = W - lw - pad;
+      ctx.drawImage(logoImg, lx, pad, lw, lh);
+    } catch (e) {
+      // 로고 로드 실패는 조용히 무시해요.
+    }
+  }
+
+  const headingSize = Math.max(20, Number(opts.fontSize) || 40);
+  const subSize = Math.max(14, Math.round(headingSize * 0.55));
+  const maxW = W - 72;
+  const makeLines = (text, size, bold, color) => {
+    ctx.font = `${bold ? "bold " : ""}${size}px sans-serif`;
+    return wrapTextLines(ctx, text, maxW, 2).map((t) => ({ text: t, size, bold, color, lineHeight: size * 1.25 }));
+  };
+  const headingLines = (opts.heading || "").trim() ? makeLines(opts.heading, headingSize, true, opts.headingColor || "#ffffff") : [];
+  const subLines = (opts.subheading || "").trim() ? makeLines(opts.subheading, subSize, false, opts.subColor || "#ffffff") : [];
+  const allLines = [...headingLines, ...subLines];
+  if (allLines.length) {
+    const totalH = allLines.reduce((a, l) => a + l.lineHeight, 0);
+    const startTop = H - 36 - totalH;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.shadowColor = "rgba(0,0,0,0.55)";
+    ctx.shadowBlur = 6;
+    let cum = 0;
+    allLines.forEach((l) => {
+      ctx.font = `${l.bold ? "bold " : ""}${l.size}px sans-serif`;
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.text, 36, startTop + cum + l.lineHeight * 0.8);
+      cum += l.lineHeight;
+    });
+    ctx.shadowBlur = 0;
+  }
+
+  return canvas.toDataURL("image/png");
+}
+
+function activePostSlide() {
+  return postSlides[postActiveSlideIdx] || postSlides[0];
+}
+
+function renderPostSlideList() {
+  const el = $("#postSlideList");
+  if (!el) return;
+  el.innerHTML =
+    postSlides
+      .map(
+        (s, i) => `
+    <div class="post-slide-thumb ${i === postActiveSlideIdx ? "active" : ""}" data-post-slide="${i}">
+      ${s.composedDataUrl ? `<img src="${s.composedDataUrl}">` : `<div class="post-slide-thumb-empty">${i === 0 ? "표지" : "슬라이드 " + (i + 1)}<br>이미지 없음</div>`}
+      <span class="post-slide-thumb-label">${i === 0 ? "표지" : "#" + (i + 1)}</span>
+      ${i > 0 ? `<button class="post-slide-remove" data-post-remove="${i}" title="삭제">✕</button>` : ""}
+    </div>`
+      )
+      .join("") + `<button class="post-add-slide-btn" id="postAddSlideBtn">+ 슬라이드<br>추가</button>`;
+  $$("[data-post-slide]", el).forEach((t) =>
+    t.addEventListener("click", () => {
+      postActiveSlideIdx = Number(t.dataset.postSlide);
+      if (postActiveTab === "logo" && activePostSlide().kind !== "cover") postActiveTab = "image";
+      renderPostSlideList();
+      renderPostCanvasStage();
+      renderPostTabPanel();
+    })
+  );
+  $$("[data-post-remove]", el).forEach((b) =>
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const i = Number(b.dataset.postRemove);
+      postSlides.splice(i, 1);
+      if (postActiveSlideIdx >= postSlides.length) postActiveSlideIdx = postSlides.length - 1;
+      renderPostSlideList();
+      renderPostCanvasStage();
+      renderPostTabPanel();
+    })
+  );
+  $("#postAddSlideBtn")?.addEventListener("click", postAddSlide);
+}
+
+function postAddSlide() {
+  postSlides.push(newContentSlide(postSlides.length));
+  postActiveSlideIdx = postSlides.length - 1;
+  postActiveTab = "image";
+  renderPostSlideList();
+  renderPostCanvasStage();
+  renderPostTabPanel();
+}
+
+function renderPostCanvasStage() {
+  const el = $("#postCanvasStage");
+  if (!el) return;
+  const s = activePostSlide();
+  const arrows =
+    postSlides.length > 1
+      ? `
+    <button class="post-carousel-arrow prev" id="postPrevBtn">‹</button>
+    <button class="post-carousel-arrow next" id="postNextBtn">›</button>
+    <div class="post-carousel-dots">${postSlides.map((_, i) => `<span class="${i === postActiveSlideIdx ? "active" : ""}"></span>`).join("")}</div>`
+      : "";
+  el.innerHTML =
+    (s && s.composedDataUrl ? `<img src="${s.composedDataUrl}">` : `<div class="post-canvas-empty">오른쪽 "🖼 이미지" 탭에서 사진을 골라주세요</div>`) + arrows;
+  const nav = (dir) => {
+    postActiveSlideIdx = (postActiveSlideIdx + dir + postSlides.length) % postSlides.length;
+    if (postActiveTab === "logo" && activePostSlide().kind !== "cover") postActiveTab = "image";
+    renderPostSlideList();
+    renderPostCanvasStage();
+    renderPostTabPanel();
+  };
+  $("#postPrevBtn")?.addEventListener("click", () => nav(-1));
+  $("#postNextBtn")?.addEventListener("click", () => nav(1));
+}
+
+function renderPostTabPanel() {
+  const tabsEl = $("#postTabs");
+  const panelEl = $("#postTabPanel");
+  if (!tabsEl || !panelEl) return;
+  const s = activePostSlide();
+  if (postActiveTab === "logo" && s.kind !== "cover") postActiveTab = "image";
+  $$(".post-tab-btn", tabsEl).forEach((b) => {
+    const tab = b.dataset.postTab;
+    if (tab === "logo") b.style.display = s.kind === "cover" ? "" : "none";
+    b.classList.toggle("active", tab === postActiveTab);
+  });
+
+  if (postActiveTab === "text") {
+    panelEl.innerHTML = `
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--muted); font-weight:600;">
+        ${s.kind === "cover" ? "타이틀" : "제목"}
+        <input id="postHeadingInput" value="${escHtml(s.heading || "")}">
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--muted); font-weight:600; margin-top:8px;">
+        ${s.kind === "cover" ? "부제(선택)" : "부제/설명"}
+        <input id="postSubInput" value="${escHtml(s.subheading || "")}">
+      </label>
+      <div class="scene-style-row" style="margin-top:10px;">
+        <label>크기 <input type="range" min="20" max="72" id="postFontSizeInput" value="${Number(s.fontSize) || 40}"></label>
+        <label>제목색 <input type="color" id="postHeadColorInput" value="${s.headingColor || "#ffffff"}"></label>
+        <label>부제색 <input type="color" id="postSubColorInput" value="${s.subColor || "#ffffff"}"></label>
+      </div>
+    `;
+    $("#postHeadingInput")?.addEventListener("input", (e) => {
+      s.heading = e.target.value;
+      postRecomposeActiveSlide();
+    });
+    $("#postSubInput")?.addEventListener("input", (e) => {
+      s.subheading = e.target.value;
+      postRecomposeActiveSlide();
+    });
+    $("#postFontSizeInput")?.addEventListener("input", (e) => {
+      s.fontSize = Number(e.target.value);
+      postRecomposeActiveSlide();
+    });
+    $("#postHeadColorInput")?.addEventListener("input", (e) => {
+      s.headingColor = e.target.value;
+      postRecomposeActiveSlide();
+    });
+    $("#postSubColorInput")?.addEventListener("input", (e) => {
+      s.subColor = e.target.value;
+      postRecomposeActiveSlide();
+    });
+  } else if (postActiveTab === "logo") {
+    panelEl.innerHTML = `
+      <label class="checkbox-label"><input type="checkbox" id="postLogoEnabledInput" ${s.logoEnabled ? "checked" : ""}> 표지에 로고 표시</label>
+      <div class="modal-actions" style="justify-content:flex-start; margin-top:8px;">
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 로고 이미지 업로드<input type="file" accept="image/*" id="postLogoFileInput" style="display:none;"></label>
+        <select id="postLogoPosInput" style="font-size:12px; padding:4px 6px; border-radius:6px;">
+          <option value="top-left" ${s.logoPosition === "top-left" ? "selected" : ""}>좌상단</option>
+          <option value="top-center" ${s.logoPosition === "top-center" ? "selected" : ""}>중앙상단</option>
+          <option value="top-right" ${s.logoPosition === "top-right" ? "selected" : ""}>우상단</option>
+        </select>
+      </div>
+      ${
+        s.logoDataUrl
+          ? `<img src="${s.logoDataUrl}" style="max-width:80px; max-height:60px; margin-top:8px; border-radius:6px; border:1px solid var(--border,#e5e5ea);">`
+          : `<p class="hint" style="margin-top:8px;">아직 업로드한 로고가 없어요. 없으면 로고 없이 만들어져요.</p>`
+      }
+    `;
+    $("#postLogoEnabledInput")?.addEventListener("change", (e) => {
+      s.logoEnabled = e.target.checked;
+      postRecomposeActiveSlide();
+    });
+    $("#postLogoPosInput")?.addEventListener("change", (e) => {
+      s.logoPosition = e.target.value;
+      postRecomposeActiveSlide();
+    });
+    $("#postLogoFileInput")?.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      s.logoDataUrl = await fileToDataUrl(file);
+      s.logoEnabled = true;
+      await postRecomposeActiveSlide();
+      renderPostTabPanel();
+    });
+  } else {
+    panelEl.innerHTML = `
+      <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
+        <button class="btn btn-secondary btn-tiny" id="postAiImageBtn">🎨 AI 이미지</button>
+        <button class="btn btn-secondary btn-tiny" id="postPexelsBtn">📷 Pexels 추천</button>
+        <label class="btn btn-secondary btn-tiny" style="cursor:pointer;">📎 업로드<input type="file" accept="image/*" id="postUploadInput" style="display:none;"></label>
+      </div>
+      <span class="muted" id="postImageStatus"></span>
+      <div class="ai-image-gallery" id="postPexelsResults"></div>
+    `;
+    $("#postAiImageBtn")?.addEventListener("click", postGenerateAiImage);
+    $("#postPexelsBtn")?.addEventListener("click", postSearchPexels);
+    $("#postUploadInput")?.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const dataUrl = await fileToDataUrl(file);
+      s.rawImage = dataUrl;
+      await postRecomposeActiveSlide();
+    });
+  }
+}
+
+let postRecomposeTimer = null;
+function postRecomposeActiveSlide() {
+  const s = activePostSlide();
+  if (!s) return Promise.resolve();
+  clearTimeout(postRecomposeTimer);
+  return new Promise((resolve) => {
+    postRecomposeTimer = setTimeout(async () => {
+      if (s.rawImage) {
+        try {
+          s.composedDataUrl = await composePostSlide(s.rawImage, s);
+        } catch (e) {
+          console.error("게시물 슬라이드 합성 실패", e);
+        }
+      }
+      renderPostSlideList();
+      renderPostCanvasStage();
+      resolve();
+    }, 200);
+  });
+}
+
+let postImageBusy = false;
+async function postGenerateAiImage() {
+  if (postImageBusy) return;
+  postImageBusy = true;
+  const statusEl = $("#postImageStatus");
+  if (statusEl) statusEl.textContent = "생성 중...";
+  try {
+    const s = activePostSlide();
+    const prompt = s.heading || $("#ai_topic")?.value || "";
+    const cacheKey = "ai:" + prompt;
+    let dataUrl = aiImageCache.get(cacheKey) || null;
+    if (!dataUrl && CONFIG.AI_WORKER_URL) {
+      try {
+        const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.image) dataUrl = `data:${data.mimeType || "image/png"};base64,${data.image}`;
+      } catch (e) {
+        // Worker 실패는 조용히 무시하고 아래 무료 대체 서비스로 넘어가요.
+      }
+    }
+    if (!dataUrl) {
+      const seed = Math.floor(Math.random() * 1e9);
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("이미지 생성 서버 응답 오류 (" + res.status + ")");
+      const blob = await res.blob();
+      dataUrl = await fileToDataUrl(blob);
+    }
+    aiImageCache.set(cacheKey, dataUrl);
+    s.rawImage = dataUrl;
+    await postRecomposeActiveSlide();
+    if (statusEl) statusEl.textContent = "완료";
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "";
+    alert("이미지 생성에 실패했어요: " + e.message);
+  } finally {
+    postImageBusy = false;
+  }
+}
+
+async function postSearchPexels() {
+  if (postImageBusy) return;
+  postImageBusy = true;
+  const statusEl = $("#postImageStatus");
+  const optionsEl = $("#postPexelsResults");
+  const s = activePostSlide();
+  const query = s.heading || $("#ai_topic")?.value || "";
+  if (!CONFIG.AI_WORKER_URL) {
+    postImageBusy = false;
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  if (statusEl) statusEl.textContent = "검색 중...";
+  if (optionsEl) optionsEl.innerHTML = "";
+  try {
+    const cacheKey = "pexels:" + query;
+    let items = aiImageCache.get(cacheKey);
+    if (!items) {
+      const res = await fetch(CONFIG.AI_WORKER_URL + "/search-media", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, type: "photos", perPage: 6 }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.error) {
+        throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+      }
+      items = data.items || [];
+      aiImageCache.set(cacheKey, items);
+    }
+    if (!items.length) {
+      if (statusEl) statusEl.textContent = "검색 결과가 없어요.";
+      return;
+    }
+    if (statusEl) statusEl.textContent = "클릭해서 선택하세요.";
+    if (optionsEl) {
+      optionsEl.innerHTML = items
+        .map((it, j) => `<div class="ai-thumb" data-post-pexels-item="${j}"><img src="${it.thumb}" alt="Pexels 사진"></div>`)
+        .join("");
+      $$("[data-post-pexels-item]", optionsEl).forEach((elm) =>
+        elm.addEventListener("click", async () => {
+          const item = items[Number(elm.dataset.postPexelsItem)];
+          if (statusEl) statusEl.textContent = "가져오는 중...";
+          try {
+            const r = await fetch(item.imageUrl);
+            const blob = await r.blob();
+            const dataUrl = await fileToDataUrl(blob);
+            s.rawImage = dataUrl;
+            await postRecomposeActiveSlide();
+            if (statusEl) statusEl.textContent = `가져왔어요! (촬영: ${item.credit || "Pexels"})`;
+          } catch (e) {
+            if (statusEl) statusEl.textContent = "";
+            alert("가져오기에 실패했어요: " + e.message);
+          }
+        })
+      );
+    }
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "";
+    alert("Pexels 검색에 실패했어요: " + e.message);
+  } finally {
+    postImageBusy = false;
+  }
+}
+
+// 완성된 슬라이드 이미지들을 드라이브에 순서대로 올리고, 그 링크 목록을 SNS 항목에 "게시물 세트"로 붙여요.
+async function attachPostSlidesToSnsItem(id, composedDataUrls) {
+  const data = await loadModule("sns", true);
+  const item = data.items.find((s) => s.id === id);
+  if (!item) return;
+  const links = [];
+  const fileIds = [];
+  for (const dataUrl of composedDataUrls) {
+    const blob = await (await fetch(dataUrl)).blob();
+    const file = new File([blob], `post_slide_${Date.now()}_${links.length}.png`, { type: blob.type || "image/png" });
+    const uploaded = await Drive.uploadDocument(dataFolderId, file);
+    links.push(uploaded.webViewLink || "");
+    fileIds.push(uploaded.id);
+  }
+  item.imageLinks = links;
+  item.imageFileIds = fileIds;
+  item.imageLink = links[0] || "";
+  item.imageFileId = fileIds[0] || "";
+  item.videoLink = "";
+  item.videoFileId = null;
+  item.contentType = "post";
+  await saveModule("sns", data);
+}
+
+async function enterPostStudio() {
+  const data = await loadModule("sns");
+  const item = {
+    id: uid(),
+    platform: "인스타그램",
+    title: "(제목없음)",
+    content: "",
+    hashtags: "",
+    topic: "",
+    tone: "",
+    imagePrompt: "",
+    script: "",
+    assignee: "",
+    date: todayStr(),
+    time: "09:00",
+    scheduledAt: `${todayStr()}T09:00`,
+    autoPublish: true,
+    calendarEventId: null,
+    approver: "",
+    status: "작성중",
+    contentType: "post",
+    createdAt: nowStr(),
+  };
+  data.items.push(item);
+  await saveModule("sns", data);
+  studioDraftId = item.id;
+  postSlides = [newCoverSlide()];
+  postActiveSlideIdx = 0;
+  postActiveTab = "image";
+  currentTab = "postStudio";
+  $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === "postStudio"));
+  $("#pageTitle").textContent = TAB_TITLES.postStudio;
+  $("#content").innerHTML = `<div class="loading">불러오는 중...</div>`;
+  const html = await Modules.postStudio(ctx);
+  $("#content").innerHTML = html;
+  wirePostStudio();
+}
+
+async function continuePostDraft(id) {
+  studioDraftId = id;
+  postSlides = [newCoverSlide()];
+  postActiveSlideIdx = 0;
+  postActiveTab = "image";
+  currentTab = "postStudio";
+  $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === "postStudio"));
+  $("#pageTitle").textContent = TAB_TITLES.postStudio;
+  $("#content").innerHTML = `<div class="loading">불러오는 중...</div>`;
+  const html = await Modules.postStudio(ctx);
+  $("#content").innerHTML = html;
+  wirePostStudio();
+}
+
+function wirePostStudio() {
+  renderPostSlideList();
+  renderPostCanvasStage();
+  renderPostTabPanel();
+  $$(".post-tab-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      postActiveTab = b.dataset.postTab;
+      renderPostTabPanel();
+    })
+  );
+  $("#ai_topic")?.addEventListener("input", scheduleStudioAutosave);
+  $("#ai_approver")?.addEventListener("input", scheduleStudioAutosave);
+  $("#postSubmitBtn")?.addEventListener("click", async () => {
+    const missing = postSlides.filter((s) => !s.composedDataUrl);
+    if (missing.length) {
+      alert(`아직 이미지를 채우지 않은 슬라이드가 ${missing.length}개 있어요.`);
+      return;
+    }
+    if (!$("#ai_approver")?.value.trim()) {
+      alert("승인자 이메일을 입력해주세요.");
+      return;
+    }
+    await saveStudioDraftNow();
+    const submitBtn = $("#postSubmitBtn");
+    const statusEl = $("#postSubmitStatus");
+    if (submitBtn) submitBtn.disabled = true;
+    if (statusEl) statusEl.textContent = "업로드 중...";
+    try {
+      const draftId = studioDraftId;
+      await attachPostSlidesToSnsItem(draftId, postSlides.map((s) => s.composedDataUrl));
+      const data2 = await loadModule("sns", true);
+      const item2 = data2.items.find((s) => s.id === draftId);
+      if (item2) {
+        if (item2.title === "(제목없음)" && item2.topic) item2.title = item2.topic;
+        item2.status = "검토중";
+        await saveModule("sns", data2);
+      }
+      studioDraftId = null;
+      postSlides = [];
+      snsSubTab = "content";
+      goTab("sns");
+    } catch (e) {
+      if (statusEl) statusEl.textContent = "";
+      if (submitBtn) submitBtn.disabled = false;
+      alert("등록에 실패했어요: " + e.message);
+    }
+  });
 }
 
 // 스크립트(또는 주제)를 AI로 장면별 콘티로 나눠요. 각 장면은 나레이션 + 화면 자막 + 이미지 검색용 키워드로 구성돼요.
