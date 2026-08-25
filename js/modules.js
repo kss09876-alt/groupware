@@ -751,12 +751,18 @@ const Modules = {
     const items = [...data.items].sort((a, b) => (a.scheduledAt || a.date).localeCompare(b.scheduledAt || b.date));
     const statusTag = (s) => `<span class="tag ${s === "게시완료" ? "tag-ok" : s === "반려" ? "tag-no" : s === "승인" ? "tag-ok" : s === "작성중" ? "tag-pin" : "tag-wait"}">${s}</span>`;
     return `
-      <div class="toolbar"><button class="btn btn-secondary" id="aiContentBtn">🤖 AI로 콘텐츠 만들기</button><button class="btn btn-primary" id="newSnsBtn">+ 콘텐츠 등록</button></div>
+      <div class="toolbar">
+        <label class="checkbox-label" style="margin-right:auto;"><input type="checkbox" id="snsSelectAllChk"> 전체선택</label>
+        <button class="btn btn-danger" id="snsBulkDeleteBtn">🗑 선택 삭제</button>
+        <button class="btn btn-secondary" id="aiContentBtn">🤖 AI로 콘텐츠 만들기</button>
+        <button class="btn btn-primary" id="newSnsBtn">+ 콘텐츠 등록</button>
+      </div>
       <p class="hint">🤖 AI로 콘텐츠 만들기: 주제만 입력하면 문구(무료 Gemini), 이미지(무료 Workers AI/Pollinations), 릴스 나레이션 음성(무료 Workers AI TTS)까지 만들어주고, 이미지 2장 이상이면 나레이션 길이에 맞춘 슬라이드쇼 동영상도 만들 수 있어요. 직접 찍은 사진/영상을 대신 첨부할 수도 있어요.<br>※ 실제 인스타그램/페이스북 등에 자동으로 업로드하는 기능은 각 플랫폼 API 연동이 추가로 필요해요. 지금은 콘텐츠 캘린더 + 담당자 배정 + 승인 워크플로우까지 지원해요. (게시는 승인 후 담당자가 직접 "게시완료 처리" 버튼을 눌러요.)</p>
       <div class="panel">
         ${items.length ? items.map((s) => `
           <div class="list-row expand" data-sns="${s.id}">
             <div>
+              <input type="checkbox" class="sns-row-check" data-sns-check="${s.id}" style="margin-right:8px;">
               ${statusTag(s.status)}
               <span class="tag">${esc(s.platform)}</span>
               <b>${esc(s.title)}</b>

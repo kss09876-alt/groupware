@@ -1002,6 +1002,30 @@ function bindTabEvents(tab) {
         refreshCurrentTab();
       })
     );
+    // ---- 콘텐츠 운영 목록 체크박스 전체선택/선택삭제 ----
+    $$("[data-sns-check]").forEach((chk) => chk.addEventListener("click", (e) => e.stopPropagation()));
+    $("#snsSelectAllChk")?.addEventListener("change", (e) => {
+      $$("[data-sns-check]").forEach((chk) => (chk.checked = e.target.checked));
+    });
+    $("#snsBulkDeleteBtn")?.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const ids = $$("[data-sns-check]")
+        .filter((chk) => chk.checked)
+        .map((chk) => chk.dataset.snsCheck);
+      if (!ids.length) {
+        alert("삭제할 항목을 먼저 선택해주세요.");
+        return;
+      }
+      if (!confirm(`선택한 ${ids.length}개 항목을 삭제할까요? 되돌릴 수 없어요.`)) return;
+      const data = await loadModule("sns");
+      for (const id of ids) {
+        const target = data.items.find((s) => s.id === id);
+        if (target?.calendarEventId) await removeSnsCalendarEvent(target.calendarEventId);
+      }
+      data.items = data.items.filter((s) => !ids.includes(s.id));
+      await saveModule("sns", data);
+      refreshCurrentTab();
+    });
 
     $$("[data-sns-subtab]").forEach((b) =>
       b.addEventListener("click", () => {
