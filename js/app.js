@@ -198,6 +198,9 @@ const ctx = {
   get studioDraftId() {
     return studioDraftId;
   },
+  get shortsDraft() {
+    return shortsDraft;
+  },
   load: loadModule,
 };
 
@@ -230,6 +233,7 @@ $$(".nav-item").forEach((btn) => {
 });
 
 async function goTab(tab) {
+  if (tab !== "shorts") shortsDraft = null; // 쇼츠 스튜디오를 벗어나면 로컬 임시저장 상태를 비워요.
   currentTab = tab;
   if (tab === "corp") corpSubTab = "info";
   if (tab === "sns") snsSubTab = "content";
@@ -1007,12 +1011,21 @@ function bindTabEvents(tab) {
     );
 
     // ---- 오늘의 추천 ----
+    // 아이디어를 고르면 팝업/자동생성 없이, 그 내용을 가지고 바로 쇼츠 스튜디오나 게시물
+    // 스튜디오로 이동해서 거기서 직접 만들 수 있게 해요.
     $("#fetchTrendsBtn")?.addEventListener("click", fetchDailyTrends);
-    $$("[data-use-trend]").forEach((b) =>
+    $$("[data-use-trend-shorts]").forEach((b) =>
       b.addEventListener("click", async () => {
         const data = await loadModule("sns");
-        const t = (data.dailyTrends.items || [])[Number(b.dataset.useTrend)];
-        if (t) useTrendAsContent(t);
+        const t = (data.dailyTrends.items || [])[Number(b.dataset.useTrendShorts)];
+        if (t) useTrendInShortsStudio(t);
+      })
+    );
+    $$("[data-use-trend-post]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const data = await loadModule("sns");
+        const t = (data.dailyTrends.items || [])[Number(b.dataset.useTrendPost)];
+        if (t) useTrendInPostStudio(t);
       })
     );
 
@@ -1133,18 +1146,23 @@ async function fetchDailyTrends() {
   }
 }
 
-// 추천 카드에서 "이걸로 자동 콘텐츠 만들기"를 누르면, 콘텐츠 스튜디오 페이지로 넘어가서
-// 주제/플랫폼/이미지 프롬프트를 채운 초안을 바로 만들고(콘텐츠 운영 목록에 즉시 나타나요),
-// 이어서 문구 생성 → 이미지 생성까지 자동으로 실행해요.
-async function useTrendAsContent(trend) {
-  await enterContentStudio({
-    title: trend.title,
+// 추천 카드에서 "쇼츠/게시물 스튜디오에서 만들기"를 누르면, 자동으로 문구·이미지를 만들어
+// 팝업으로 던져주는 대신 그 아이디어(주제/후킹 문구)를 가지고 해당 스튜디오로 바로 이동해서
+// 직접 만들 수 있게 해요.
+async function useTrendInShortsStudio(trend) {
+  await enterShortsStudio({
     topic: trend.hook ? `${trend.title} — ${trend.hook}` : trend.title,
-    platform: trend.platform,
-    imagePrompt: trend.imagePrompt || trend.hook || trend.title,
+    script: trend.reason || "",
+    platform: trend.platform || "인스타그램",
   });
-  await generateAiCaption();
-  await generateAiImage();
+}
+
+async function useTrendInPostStudio(trend) {
+  await enterPostStudio({
+    topic: trend.hook ? `${trend.title} — ${trend.hook}` : trend.title,
+    heading: trend.title,
+    platform: trend.platform || "인스타그램",
+  });
 }
 
 // ---------------- AI로 SNS 콘텐츠 만들기 (문구 + 이미지 + 간단 동영상) ----------------
@@ -1188,35 +1206,78 @@ async function enterContentStudio(prefill) {
 // 쇼츠 스튜디오: 콘텐츠 스튜디오와 같은 "초안을 바로 만들어서 실시간 자동저장" 원리를
 // 그대로 쓰되, 화면은 대본→콘티→완성 3단계 마법사로 보여줘요. 사이드바 탭 전용이라
 // snsSubTab이 아니라 currentTab 자체를 "shorts"로 바꿔요.
-async function enterShortsStudio() {
-  const data = await loadModule("sns");
-  const item = {
-    id: uid(),
+// ---------------- 쇼츠 스튜디오 임시 저장(로컬) ----------------
+// 쇼츠 스튜디오는 "검토요청으로 등록"을 누르기 전까지 드라이브에 아무것도 쓰지 않아요.
+// 대신 입력 내용(주제/스크립트/장면별 나레이션·이미지)을 이 브라우저의 localStorage에
+// 임시로 저장해서, 새로고침하거나 다른 탭에 갔다 와도 그대로 남아있게 해요.
+const SHORTS_DRAFT_KEY = "gw_shortsDraft";
+let shortsDraft = null;
+let shortsSaveTimer = null;
+
+function loadShortsDraftFromLocal() {
+  try {
+    const raw = localStorage.getItem(SHORTS_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function scheduleShortsLocalSave() {
+  if (!shortsDraft) return;
+  clearTimeout(shortsSaveTimer);
+  shortsSaveTimer = setTimeout(saveShortsDraftToLocal, 500);
+}
+
+function saveShortsDraftToLocal() {
+  if (!shortsDraft) return;
+  shortsDraft.scenes = storyboardScenes;
+  try {
+    localStorage.setItem(SHORTS_DRAFT_KEY, JSON.stringify(shortsDraft));
+  } catch (e) {
+    // 용량 초과 등으로 실패하면, 이미지 데이터 없이(문구만) 다시 시도해요.
+    try {
+      const lite = { ...shortsDraft, scenes: storyboardScenes.map((s) => ({ ...s, mediaDataUrl: null })) };
+      localStorage.setItem(SHORTS_DRAFT_KEY, JSON.stringify(lite));
+    } catch (e2) {
+      console.error("쇼츠 임시 저장 실패", e2);
+    }
+  }
+}
+
+function clearShortsDraftLocal() {
+  localStorage.removeItem(SHORTS_DRAFT_KEY);
+}
+
+function syncShortsDraftFieldsFromDom() {
+  if (!shortsDraft) shortsDraft = { platform: "인스타그램", scenes: [] };
+  shortsDraft.topic = $("#ai_topic")?.value || "";
+  shortsDraft.tone = $("#ai_tone")?.value || shortsDraft.tone || "교육형";
+  shortsDraft.script = $("#ai_script")?.value || "";
+  shortsDraft.sceneCount = Number($("#ai_sceneCount")?.value) || shortsDraft.sceneCount || 5;
+  shortsDraft.approver = $("#ai_approver")?.value || shortsDraft.approver || "";
+  shortsDraft.scenes = storyboardScenes;
+}
+
+async function enterShortsStudio(prefill) {
+  shortsDraft = loadShortsDraftFromLocal() || {
     platform: "인스타그램",
-    title: "(제목없음)",
-    content: "",
-    hashtags: "",
     topic: "",
     tone: "교육형",
-    imagePrompt: "",
     script: "",
-    assignee: "",
-    date: todayStr(),
-    time: "09:00",
-    scheduledAt: `${todayStr()}T09:00`,
-    calendarEventId: null,
+    sceneCount: 5,
     approver: "",
-    status: "작성중",
-    createdAt: nowStr(),
+    scenes: [],
   };
-  data.items.push(item);
-  await saveModule("sns", data);
-  studioDraftId = item.id;
-  aiGalleryImages = [];
-  aiSelectedImageDataUrl = null;
-  aiVideoBlob = null;
-  aiNarrationBlob = null;
-  storyboardScenes = [];
+  if (prefill) {
+    if (prefill.topic) shortsDraft.topic = prefill.topic;
+    if (prefill.script) shortsDraft.script = prefill.script;
+    if (prefill.platform) shortsDraft.platform = prefill.platform;
+  }
+  storyboardScenes = Array.isArray(shortsDraft.scenes) ? shortsDraft.scenes : [];
+  studioDraftId = null;
   currentTab = "shorts";
   $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === "shorts"));
   $("#pageTitle").textContent = TAB_TITLES.shorts;
@@ -1224,6 +1285,10 @@ async function enterShortsStudio() {
   const html = await Modules.shorts(ctx);
   $("#content").innerHTML = html;
   wireShortsStudio();
+  if (storyboardScenes.length) {
+    renderStoryboard();
+    goShortsStep(2);
+  }
 }
 
 function goShortsStep(step) {
@@ -1240,7 +1305,10 @@ function goShortsStep(step) {
 
 function wireShortsStudio() {
   goShortsStep(1);
-  onStoryboardReadyHook = () => goShortsStep(2);
+  onStoryboardReadyHook = () => {
+    goShortsStep(2);
+    scheduleShortsLocalSave();
+  };
   $("#genStoryboardBtn")?.addEventListener("click", generateStoryboard);
   $("#fillAllScenesBtn")?.addEventListener("click", fillAllScenesWithAiImages);
   $$("[data-shorts-back]").forEach((b) =>
@@ -1251,39 +1319,153 @@ function wireShortsStudio() {
       alert("먼저 콘티를 만들고 장면 이미지를 골라주세요.");
       return;
     }
-    const missing = storyboardScenes.filter((s) => !s.composedDataUrl);
+    const missing = storyboardScenes.filter((s) => !s.mediaDataUrl);
     if (missing.length) {
       alert(`아직 이미지를 고르지 않은 장면이 ${missing.length}개 있어요.`);
       return;
     }
     goShortsStep(3);
+    renderShortsFinalList();
   });
-  $("#assembleSetBtn")?.addEventListener("click", assembleContentSet);
-  $("#ai_topic")?.addEventListener("input", scheduleStudioAutosave);
-  $("#ai_tone")?.addEventListener("change", scheduleStudioAutosave);
-  $("#ai_script")?.addEventListener("input", scheduleStudioAutosave);
-  $("#ai_approver")?.addEventListener("input", scheduleStudioAutosave);
-  $("#shortsSubmitBtn")?.addEventListener("click", async () => {
-    if (!aiVideoBlob && !aiSelectedImageDataUrl) {
-      alert("먼저 '릴스+게시물 세트로 완성하기'를 눌러 콘텐츠를 완성해주세요.");
-      return;
+  ["ai_topic", "ai_tone", "ai_script", "ai_sceneCount"].forEach((id) => {
+    const el = $("#" + id);
+    if (!el) return;
+    el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => {
+      syncShortsDraftFieldsFromDom();
+      scheduleShortsLocalSave();
+    });
+  });
+  $("#ai_approver")?.addEventListener("input", () => {
+    syncShortsDraftFieldsFromDom();
+    scheduleShortsLocalSave();
+  });
+  $("#shortsDownloadAllBtn")?.addEventListener("click", downloadShortsSet);
+  $("#shortsSubmitBtn")?.addEventListener("click", submitShortsDraft);
+}
+
+// 장면별 나레이션/이미지를 순서대로 정리해서 보여줘요 (자막 합성 없이, 원본 이미지 그대로).
+function renderShortsFinalList() {
+  const el = $("#shortsFinalList");
+  if (!el) return;
+  el.innerHTML = storyboardScenes
+    .map(
+      (s, i) => `
+    <div class="storyboard-scene">
+      <div class="storyboard-scene-head">#${s.sceneNumber || i + 1}</div>
+      ${s.mediaDataUrl ? `<img src="${s.mediaDataUrl}" style="max-width:220px; border-radius:8px;">` : `<div class="post-canvas-empty">이미지 없음</div>`}
+      <p style="font-size:13px; margin:8px 0;"><b>나레이션</b><br>${escHtml(s.narration || "")}</p>
+      <p class="muted" style="font-size:12px;">화면 자막(참고용): ${escHtml(s.titleText || "")}</p>
+    </div>`
+    )
+    .join("");
+}
+
+function downloadFile(href, filename) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// 대본(나레이션+화면자막 참고문구)을 텍스트 파일로, 장면 이미지들을 각각 파일로 다운로드해요.
+// (프리미어 등에서 편집할 때 그대로 가져다 쓸 수 있게 정리된 형태예요.)
+async function downloadShortsSet() {
+  const statusEl = $("#shortsDownloadStatus");
+  if (!storyboardScenes.length) {
+    alert("먼저 콘티를 만들어주세요.");
+    return;
+  }
+  if (statusEl) statusEl.textContent = "다운로드 준비 중...";
+  const scriptText = storyboardScenes
+    .map((s, i) => `#${s.sceneNumber || i + 1}\n나레이션: ${s.narration || ""}\n화면 자막(참고용): ${s.titleText || ""}`)
+    .join("\n\n");
+  const scriptUrl = URL.createObjectURL(new Blob([scriptText], { type: "text/plain;charset=utf-8" }));
+  downloadFile(scriptUrl, "쇼츠_대본.txt");
+  for (let i = 0; i < storyboardScenes.length; i++) {
+    const s = storyboardScenes[i];
+    if (!s.mediaDataUrl) continue;
+    downloadFile(s.mediaDataUrl, `장면_${s.sceneNumber || i + 1}.png`);
+    // 브라우저가 짧은 시간에 여러 파일을 한꺼번에 다운로드하는 걸 막지 않도록 살짝 간격을 둬요.
+    await new Promise((r) => setTimeout(r, 350));
+  }
+  if (statusEl) statusEl.textContent = "다운로드 완료!";
+}
+
+// "검토요청으로 등록"을 눌렀을 때만 실제로 드라이브에 저장되고 SNS 운영 목록에 나타나요.
+async function submitShortsDraft() {
+  if (!storyboardScenes.length) {
+    alert("먼저 콘티를 만들어주세요.");
+    return;
+  }
+  const missing = storyboardScenes.filter((s) => !s.mediaDataUrl);
+  if (missing.length) {
+    alert(`아직 이미지를 고르지 않은 장면이 ${missing.length}개 있어요.`);
+    return;
+  }
+  syncShortsDraftFieldsFromDom();
+  const approver = $("#ai_approver")?.value.trim();
+  if (!approver) {
+    alert("승인자 이메일을 입력해주세요.");
+    return;
+  }
+  const submitBtn = $("#shortsSubmitBtn");
+  const statusEl = $("#shortsSubmitStatus");
+  if (submitBtn) submitBtn.disabled = true;
+  if (statusEl) statusEl.textContent = "드라이브에 저장 중...";
+  try {
+    const links = [];
+    const fileIds = [];
+    for (let i = 0; i < storyboardScenes.length; i++) {
+      const s = storyboardScenes[i];
+      const blob = await (await fetch(s.mediaDataUrl)).blob();
+      const file = new File([blob], `scene_${s.sceneNumber || i + 1}.png`, { type: blob.type || "image/png" });
+      const uploaded = await Drive.uploadDocument(dataFolderId, file);
+      links.push(uploaded.webViewLink || "");
+      fileIds.push(uploaded.id);
     }
-    await saveStudioDraftNow();
+    const scriptText = storyboardScenes
+      .map((s, i) => `#${s.sceneNumber || i + 1}\n나레이션: ${s.narration || ""}\n화면 자막(참고용): ${s.titleText || ""}`)
+      .join("\n\n");
     const data = await loadModule("sns", true);
-    const item = data.items.find((s) => s.id === studioDraftId);
-    if (!item) return;
-    if (!item.approver) {
-      alert("승인자 이메일을 입력해주세요.");
-      return;
-    }
-    if (item.title === "(제목없음)" && item.topic) item.title = item.topic;
-    item.status = "검토중";
+    const newItem = {
+      id: uid(),
+      platform: shortsDraft.platform || "인스타그램",
+      title: shortsDraft.topic || "(제목없음)",
+      content: scriptText,
+      hashtags: "",
+      topic: shortsDraft.topic || "",
+      tone: shortsDraft.tone || "",
+      imagePrompt: "",
+      script: shortsDraft.script || "",
+      assignee: "",
+      date: todayStr(),
+      time: "09:00",
+      scheduledAt: `${todayStr()}T09:00`,
+      calendarEventId: null,
+      approver,
+      status: "검토중",
+      contentType: "shorts",
+      imageLinks: links,
+      imageFileIds: fileIds,
+      imageLink: links[0] || "",
+      imageFileId: fileIds[0] || "",
+      createdAt: nowStr(),
+    };
+    data.items.push(newItem);
     await saveModule("sns", data);
-    studioDraftId = null;
+    clearShortsDraftLocal();
+    shortsDraft = null;
+    storyboardScenes = [];
     onStoryboardReadyHook = null;
     snsSubTab = "content";
     goTab("sns");
-  });
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "";
+    if (submitBtn) submitBtn.disabled = false;
+    alert("등록에 실패했어요: " + e.message);
+  }
 }
 
 function wireContentStudio() {
@@ -1292,6 +1474,7 @@ function wireContentStudio() {
   aiVideoBlob = null;
   aiNarrationBlob = null;
   storyboardScenes = [];
+  shortsDraft = null; // 쇼츠 스튜디오의 로컬 임시저장 상태가 콘텐츠 스튜디오 편집에 섞여 들어가지 않게 해요.
   onStoryboardReadyHook = null;
   $("#studioBackBtn")?.addEventListener("click", async () => {
     await saveStudioDraftNow();
@@ -2118,15 +2301,16 @@ async function postSearchPexels() {
   }
 }
 
-async function enterPostStudio() {
+async function enterPostStudio(prefill) {
+  shortsDraft = null;
   const data = await loadModule("sns");
   const item = {
     id: uid(),
-    platform: "인스타그램",
-    title: "(제목없음)",
+    platform: (prefill && prefill.platform) || "인스타그램",
+    title: (prefill && prefill.topic) || "(제목없음)",
     content: "",
     hashtags: "",
-    topic: "",
+    topic: (prefill && prefill.topic) || "",
     tone: "",
     imagePrompt: "",
     script: "",
@@ -2144,6 +2328,7 @@ async function enterPostStudio() {
   await saveModule("sns", data);
   studioDraftId = item.id;
   postSlides = [newCoverSlide()];
+  if (prefill && prefill.heading) postSlides[0].heading = prefill.heading;
   postActiveSlideIdx = 0;
   postActiveTab = "text";
   currentTab = "postStudio";
@@ -2156,6 +2341,7 @@ async function enterPostStudio() {
 }
 
 async function continuePostDraft(id) {
+  shortsDraft = null;
   studioDraftId = id;
   postSlides = [newCoverSlide()];
   postActiveSlideIdx = 0;
@@ -2273,18 +2459,16 @@ async function generateStoryboard() {
     if (!res.ok || !data || data.error) {
       throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
     }
-    const baseFontSize = Number($("#ai_titleFontSize")?.value) || 48;
     storyboardScenes = (data.scenes || []).map((s) => ({
       ...s,
       mediaDataUrl: null,
-      composedDataUrl: null,
-      titleStyle: { ...defaultTitleStyle(), fontSize: baseFontSize },
     }));
     renderStoryboard();
     const row = $("#storyboardAssembleRow");
     if (row) row.style.display = "flex";
     statusEl.textContent = `${storyboardScenes.length}개 장면을 만들었어요. 각 장면마다 이미지를 골라주세요.`;
     if (onStoryboardReadyHook) onStoryboardReadyHook();
+    scheduleShortsLocalSave();
   } catch (e) {
     statusEl.textContent = "";
     alert("콘티 생성에 실패했어요: " + e.message);
@@ -2306,23 +2490,10 @@ function renderStoryboard() {
         <textarea rows="2" data-scene-field="narration" data-scene-idx="${i}">${escHtml(s.narration)}</textarea>
       </label>
       <label style="display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--muted); font-weight:600; margin-top:6px;">
-        화면 자막(타이틀)
+        화면 자막(참고용 — 합성되지 않아요, 편집할 때 참고해주세요)
         <input data-scene-field="titleText" data-scene-idx="${i}" value="${escHtml(s.titleText)}">
       </label>
       <p class="hint" style="margin:6px 0;">🔎 ${escHtml(s.imageKeyword)}</p>
-      <div class="scene-style-row">
-        <label>위치
-          <span class="scene-pos-btns">
-            <button type="button" class="scene-pos-btn${(s.titleStyle?.position || "top") === "top" ? " active" : ""}" data-scene-pos="${i}" data-pos-val="top">상단</button>
-            <button type="button" class="scene-pos-btn${(s.titleStyle?.position || "top") === "middle" ? " active" : ""}" data-scene-pos="${i}" data-pos-val="middle">중앙</button>
-            <button type="button" class="scene-pos-btn${(s.titleStyle?.position || "top") === "bottom" ? " active" : ""}" data-scene-pos="${i}" data-pos-val="bottom">하단</button>
-          </span>
-        </label>
-        <label>크기 <input type="range" min="20" max="90" data-scene-fontsize="${i}" value="${Number(s.titleStyle?.fontSize) || 48}"></label>
-        <label>자간 <input type="range" min="-2" max="12" data-scene-ls="${i}" value="${Number(s.titleStyle?.letterSpacing) || 0}"></label>
-        <label>글자색 <input type="color" data-scene-color="${i}" value="${s.titleStyle?.color || "#ffffff"}"></label>
-        <label>배경색 <input type="color" data-scene-bgcolor="${i}" value="${s.titleStyle?.bgColor || "#0b0b0b"}"></label>
-      </div>
       <div class="modal-actions" style="justify-content:flex-start;">
         <button class="btn btn-secondary btn-tiny" data-scene-ai="${i}">🎨 AI 이미지</button>
         <button class="btn btn-secondary btn-tiny" data-scene-pexels="${i}">📷 Pexels 추천</button>
@@ -2339,7 +2510,7 @@ function renderStoryboard() {
     f.addEventListener("input", () => {
       const i = Number(f.dataset.sceneIdx);
       storyboardScenes[i][f.dataset.sceneField] = f.value;
-      if (f.dataset.sceneField === "titleText") sceneRecompose(i);
+      scheduleShortsLocalSave();
     })
   );
   $$("[data-scene-ai]", el).forEach((b) => b.addEventListener("click", () => sceneGenerateAiImage(Number(b.dataset.sceneAi))));
@@ -2353,84 +2524,21 @@ function renderStoryboard() {
       await sceneSetMedia(i, dataUrl);
     })
   );
-
-  // 장면별 자막 위치/크기/자간/색상 컨트롤 — 값이 바뀌면 이미 골라둔 사진 위에 즉시 다시 합성해요.
-  $$("[data-scene-pos]", el).forEach((btn) =>
-    btn.addEventListener("click", () => {
-      const i = Number(btn.dataset.scenePos);
-      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
-      storyboardScenes[i].titleStyle.position = btn.dataset.posVal;
-      $$(`[data-scene-pos="${i}"]`, el).forEach((b) => b.classList.toggle("active", b === btn));
-      sceneRecompose(i);
-    })
-  );
-  $$("[data-scene-fontsize]", el).forEach((inp) =>
-    inp.addEventListener("input", () => {
-      const i = Number(inp.dataset.sceneFontsize);
-      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
-      storyboardScenes[i].titleStyle.fontSize = Number(inp.value);
-      sceneRecompose(i);
-    })
-  );
-  $$("[data-scene-ls]", el).forEach((inp) =>
-    inp.addEventListener("input", () => {
-      const i = Number(inp.dataset.sceneLs);
-      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
-      storyboardScenes[i].titleStyle.letterSpacing = Number(inp.value);
-      sceneRecompose(i);
-    })
-  );
-  $$("[data-scene-color]", el).forEach((inp) =>
-    inp.addEventListener("input", () => {
-      const i = Number(inp.dataset.sceneColor);
-      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
-      storyboardScenes[i].titleStyle.color = inp.value;
-      sceneRecompose(i);
-    })
-  );
-  $$("[data-scene-bgcolor]", el).forEach((inp) =>
-    inp.addEventListener("input", () => {
-      const i = Number(inp.dataset.sceneBgcolor);
-      storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
-      storyboardScenes[i].titleStyle.bgColor = inp.value;
-      sceneRecompose(i);
-    })
-  );
 }
 
-// 이미 원본 사진이 골라져 있는 장면의 자막 스타일이 바뀌면, 저장해둔 원본으로 다시 합성만 해요(재검색/재생성 없이).
-let sceneRecomposeTimers = {};
-function sceneRecompose(i) {
-  const scene = storyboardScenes[i];
-  if (!scene || !scene.mediaDataUrl) return; // 아직 사진을 안 골랐으면 합성할 게 없어요.
-  clearTimeout(sceneRecomposeTimers[i]);
-  sceneRecomposeTimers[i] = setTimeout(async () => {
-    try {
-      const composed = await composeTitleOverlay(scene.mediaDataUrl, scene.titleText, scene.titleStyle || defaultTitleStyle());
-      scene.composedDataUrl = composed;
-      const previewEl = $(`[data-scene-preview="${i}"]`);
-      if (previewEl) previewEl.innerHTML = `<img src="${composed}" style="max-width:160px; border-radius:8px; margin-top:6px;">`;
-    } catch (e) {
-      // 미리보기 재합성 실패는 조용히 무시해요(다음 편집 때 다시 시도돼요).
-    }
-  }, 250);
-}
-
-// 선택된 원본 이미지에 그 장면의 타이틀 자막을 입혀서 미리보기와 상태를 갱신해요.
+// 선택된 원본 이미지를 그대로(자막 합성 없이) 그 장면에 첨부하고 미리보기를 갱신해요.
 async function sceneSetMedia(i, rawDataUrl) {
   const statusEl = $(`[data-scene-status="${i}"]`);
-  if (statusEl) statusEl.textContent = "자막 합성 중...";
+  if (statusEl) statusEl.textContent = "첨부 중...";
   try {
-    storyboardScenes[i].titleStyle = storyboardScenes[i].titleStyle || defaultTitleStyle();
-    const composed = await composeTitleOverlay(rawDataUrl, storyboardScenes[i].titleText, storyboardScenes[i].titleStyle);
     storyboardScenes[i].mediaDataUrl = rawDataUrl;
-    storyboardScenes[i].composedDataUrl = composed;
     const previewEl = $(`[data-scene-preview="${i}"]`);
-    if (previewEl) previewEl.innerHTML = `<img src="${composed}" style="max-width:160px; border-radius:8px; margin-top:6px;">`;
+    if (previewEl) previewEl.innerHTML = `<img src="${rawDataUrl}" style="max-width:160px; border-radius:8px; margin-top:6px;">`;
     if (statusEl) statusEl.textContent = "완료";
+    scheduleShortsLocalSave();
   } catch (e) {
     if (statusEl) statusEl.textContent = "";
-    alert("이미지 합성에 실패했어요: " + e.message);
+    alert("이미지 첨부에 실패했어요: " + e.message);
   }
 }
 
@@ -2563,11 +2671,13 @@ async function sceneSearchPexels(i) {
 
 // 모든 장면에 이미지가 준비되면, 그 장면 이미지들로 "일반 게시물용 대표 이미지 + 릴스 영상"을
 // 한 세트로 자동 완성해요 (기존 이미지 갤러리/나레이션/슬라이드쇼 로직을 그대로 재사용해요).
+// 콘텐츠 스튜디오에 내장된 콘티 기능 전용: 장면 이미지들 중 첫 장면을 대표 이미지로 설정해서
+// 드라이브에 저장해요(영상/나레이션 음성은 만들지 않아요 — 필요하면 편집 프로그램에서 별도로 작업해주세요).
 async function assembleContentSet() {
   const btn = $("#assembleSetBtn");
   const statusEl = $("#assembleSetStatus");
   if (!storyboardScenes.length) return;
-  const missing = storyboardScenes.filter((s) => !s.composedDataUrl);
+  const missing = storyboardScenes.filter((s) => !s.mediaDataUrl);
   if (missing.length) {
     alert(`아직 이미지를 고르지 않은 장면이 ${missing.length}개 있어요. 모든 장면에 이미지를 먼저 골라주세요.`);
     return;
@@ -2575,50 +2685,11 @@ async function assembleContentSet() {
   btn.disabled = true;
   try {
     statusEl.textContent = "게시물용 대표 이미지 설정 중...";
-    aiGalleryImages = storyboardScenes.map((s) => s.composedDataUrl);
+    aiGalleryImages = storyboardScenes.map((s) => s.mediaDataUrl);
     aiSelectedImageDataUrl = aiGalleryImages[0];
     renderAiGallery();
-
-    if (CONFIG.AI_WORKER_URL) {
-      statusEl.textContent = "나레이션 음성 만드는 중...";
-      const combinedNarration = storyboardScenes
-        .map((s) => s.narration)
-        .join(" ")
-        .trim()
-        .slice(0, 800);
-      if (combinedNarration) {
-        try {
-          const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-speech", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: combinedNarration }),
-          });
-          const data = await res.json().catch(() => null);
-          if (res.ok && data && data.audio) {
-            const byteChars = atob(data.audio);
-            const bytes = new Uint8Array(byteChars.length);
-            for (let k = 0; k < byteChars.length; k++) bytes[k] = byteChars.charCodeAt(k);
-            aiNarrationBlob = new Blob([bytes], { type: data.mimeType || "audio/mpeg" });
-            const url = URL.createObjectURL(aiNarrationBlob);
-            const preview = $("#aiNarrationPreview");
-            if (preview) preview.innerHTML = `<audio src="${url}" controls style="margin-top:8px;"></audio>`;
-            if ($("#aiTextResult")) $("#aiTextResult").style.display = "block";
-          }
-        } catch (e) {
-          // 나레이션 실패해도 슬라이드쇼는 음성 없이 계속 만들어요.
-        }
-      }
-    }
-
-    statusEl.textContent = "릴스 영상 만드는 중...";
-    const caption = ($("#ai_caption")?.value || $("#ai_topic").value || "").trim();
-    aiVideoBlob = await buildSlideshowVideo(aiGalleryImages.slice(0, 8), caption, aiNarrationBlob);
-    const url = URL.createObjectURL(aiVideoBlob);
-    const preview = $("#aiVideoPreview");
-    if (preview) preview.innerHTML = `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px;"></video>`;
     syncStudioMedia();
-
-    statusEl.textContent = "완성했어요! 게시물용 대표 이미지와 릴스 영상이 모두 준비되어 자동 저장됐어요. 필요하면 위 문구를 다듬고 '검토요청으로 등록'을 눌러주세요.";
+    statusEl.textContent = "완성했어요! 첫 장면 이미지가 대표 이미지로 저장됐어요. 필요하면 위 문구를 다듬고 '검토요청으로 등록'을 눌러주세요.";
   } catch (e) {
     statusEl.textContent = "";
     alert("세트 만들기에 실패했어요: " + e.message);

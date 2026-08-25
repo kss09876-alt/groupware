@@ -616,20 +616,26 @@ const Modules = {
 
   // ---------------- 쇼츠 스튜디오 (대본 → 콘티/장면 검토 → 완성, 3단계 마법사) ----------------
   // 롱폼 영상을 잘라주는 서비스들과 달리 우리는 원본 영상이 없으니, 그 대신 "대본 →
-  // 장면 나누기 → 장면별 이미지·자막 → 완성"을 단계별로 밟아가는 전용 인터페이스로 만들었어요.
-  // 3단계 모두 한 화면에 이미 만들어두고 보이기/숨기기만 바꿔서, 콘티를 만들다가
-  // 앞뒤로 이동해도 입력한 내용이나 골라둔 이미지가 사라지지 않게 했어요.
+  // 장면 나누기 → 장면별 나레이션·이미지 추천 → 완성"을 단계별로 밟아가는 전용 인터페이스로
+  // 만들었어요. 실제 자막 합성/영상 제작은 프리미어 등에서 별도로 하는 걸 전제로, 여기서는
+  // 나레이션 문구와 장면별 이미지를 추천/정리해서 다운로드하는 데까지만 도와줘요.
+  // 입력 내용은 드라이브가 아니라 이 브라우저에 임시로 저장돼서, 새로고침해도 남아있어요
+  // ("검토요청으로 등록"을 눌러야 그제서야 드라이브에 저장되고 SNS 운영 목록에 나타나요).
   async shorts(ctx) {
-    const data = await ctx.load("sns");
-    const item = data.items.find((s) => s.id === ctx.studioDraftId);
-    if (!item) {
-      return `<div class="empty">쇼츠 초안을 준비하고 있어요. 잠시 후 다시 시도해주세요.</div>`;
-    }
+    const item = ctx.shortsDraft || {};
     const genres = ["교육형", "인터뷰형", "리뷰형", "브이로그형", "자극적(두괄식)"];
-    const published = [...data.items]
-      .filter((s) => s.status === "게시완료")
-      .sort((a, b) => (Number(b.actualViews) || 0) - (Number(a.actualViews) || 0))
-      .slice(0, 3);
+    let publishedHint = "";
+    try {
+      const data = await ctx.load("sns");
+      const published = [...data.items]
+        .filter((s) => s.status === "게시완료")
+        .sort((a, b) => (Number(b.actualViews) || 0) - (Number(a.actualViews) || 0))
+        .slice(0, 3);
+      if (published.length) publishedHint = `참고: 지금까지 반응이 좋았던 콘텐츠 — ${published.map((p) => esc(p.title)).join(", ")}. 비슷한 결의 소재도 추천에 반영돼요.`;
+    } catch (e) {
+      // 참고 힌트는 부가 정보라, 실패해도 조용히 무시해요.
+    }
+    const sceneCounts = [3, 4, 5, 6, 8];
     return `
       <div class="shorts-steps">
         <span class="shorts-step-dot active" data-shorts-dot="1">1. 대본/장르</span>
@@ -639,11 +645,8 @@ const Modules = {
 
       <div id="shortsStep1" class="panel">
         <h3>1. 대본과 장르를 정해주세요</h3>
-        <p class="hint">${
-          published.length
-            ? `참고: 지금까지 반응이 좋았던 콘텐츠 — ${published.map((p) => esc(p.title)).join(", ")}. 비슷한 결의 소재도 추천에 반영돼요.`
-            : "아직 게시완료 실적이 없어서, 지금은 일반적인 기준으로 추천해요. 실적이 쌓일수록 추천이 더 정교해져요."
-        }</p>
+        <p class="hint">${publishedHint || "아직 게시완료 실적이 없어서, 지금은 일반적인 기준으로 추천해요. 실적이 쌓일수록 추천이 더 정교해져요."}</p>
+        <p class="hint">✏️ 여기서는 나레이션과 장면별 이미지만 추천해드려요 — 화면 자막 합성이나 영상 편집은 프리미어 등에서 직접 해주세요. 입력한 내용은 새로고침해도 이 브라우저에 임시로 남아있어요.</p>
         <div class="form-grid">
           <label>주제/키워드 <input id="ai_topic" value="${esc(item.topic || "")}" placeholder="예: 신제품 출시 이벤트"></label>
           <label>장르/스타일
@@ -651,7 +654,7 @@ const Modules = {
           </label>
           <label>스크립트 (비워두면 주제로 새로 만들어요) <textarea id="ai_script" rows="3">${esc(item.script || "")}</textarea></label>
           <label>장면 수
-            <select id="ai_sceneCount"><option value="3">3장면</option><option value="4">4장면</option><option value="5" selected>5장면</option><option value="6">6장면</option><option value="8">8장면</option></select>
+            <select id="ai_sceneCount">${sceneCounts.map((n) => `<option value="${n}" ${Number(item.sceneCount) === n || (!item.sceneCount && n === 5) ? "selected" : ""}>${n}장면</option>`).join("")}</select>
           </label>
         </div>
         <div class="modal-actions">
@@ -661,11 +664,9 @@ const Modules = {
       </div>
 
       <div id="shortsStep2" class="panel" style="display:none;">
-        <h3>2. 장면별 이미지를 골라주세요</h3>
-        <p class="hint">각 장면 아래에서 🎨 AI 이미지 / 📷 Pexels 추천 / 📎 업로드 중 골라주세요. 고르면 그 장면 자막이 자동으로 사진 위에 합성돼요.</p>
-        <p class="hint">장면마다 자막 위치·크기·색상을 따로 조절할 수 있어요. 아래 "기본값"은 새로 만드는 장면에만 적용돼요.</p>
+        <h3>2. 장면별 나레이션과 이미지를 확인해주세요</h3>
+        <p class="hint">각 장면 아래에서 🎨 AI 이미지 / 📷 Pexels 추천 / 📎 업로드 중 골라서 첨부해주세요. 자막은 합성되지 않고, "화면 자막(참고용)"은 나중에 편집할 때 참고할 문구예요.</p>
         <div class="modal-actions" style="justify-content:flex-start;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">기본 글자 크기 <input type="range" id="ai_titleFontSize" min="28" max="72" value="48"></label>
           <button class="btn btn-secondary btn-tiny" id="fillAllScenesBtn">🪄 빈 장면 AI 이미지로 한번에 채우기</button>
           <span id="fillAllScenesStatus" class="muted"></span>
         </div>
@@ -677,38 +678,21 @@ const Modules = {
       </div>
 
       <div id="shortsStep3" class="panel" style="display:none;">
-        <h3>3. 릴스 영상 + 게시물 이미지로 완성</h3>
-        <p class="hint">장면 전환에 자연스러운 페이드 효과를 넣어서 이어붙이고, 나레이션 음성도 자동으로 입혀요.</p>
+        <h3>3. 완성 — 장면 정리 & 다운로드</h3>
+        <p class="hint">나레이션과 이미지를 장면 순서대로 정리했어요. "검토요청으로 등록"을 눌러야 드라이브에 저장되고 SNS 운영 목록에 나타나요.</p>
         <div class="modal-actions">
           <button class="btn btn-secondary btn-tiny" data-shorts-back="2">← 이전</button>
-          <button class="btn btn-primary btn-tiny" id="assembleSetBtn">🎬📸 릴스+게시물 세트로 완성하기</button>
-          <span id="assembleSetStatus" class="muted"></span>
+          <button class="btn btn-secondary btn-tiny" id="shortsDownloadAllBtn">⬇️ 이미지+대본 전체 다운로드</button>
+          <span id="shortsDownloadStatus" class="muted"></span>
         </div>
-        <div id="aiNarrationPreview"></div>
-        <div id="aiVideoPreview"></div>
-        <div id="aiImageGallery" class="ai-image-gallery"></div>
+        <div id="shortsFinalList"></div>
         <div class="form-grid" style="margin-top:14px;">
           <label>승인자 이메일 <input id="ai_approver" value="${esc(item.approver || "")}" placeholder="approver@company.com"></label>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" id="shortsSubmitBtn">검토요청으로 등록</button>
-          <span id="studioSaveStatus" class="muted"></span>
+          <button class="btn btn-primary" id="shortsSubmitBtn">검토요청으로 등록 (드라이브 저장)</button>
+          <span id="shortsSubmitStatus" class="muted"></span>
         </div>
-      </div>
-
-      <!-- 기존 콘티 엔진이 참조하는 요소들(문구/이미지프롬프트/캡션 등) — 화면엔 안 보이지만 자동저장·완성 로직이 그대로 재사용돼요 -->
-      <div style="display:none;">
-        <input id="ai_platform" value="${esc(item.platform || "인스타그램")}">
-        <input id="ai_imgPrompt" value="${esc(item.imagePrompt || "")}">
-        <textarea id="ai_caption">${esc(item.content || "")}</textarea>
-        <div id="ai_hashtags">${esc(item.hashtags || "")}</div>
-        <div id="aiTextResult"></div>
-        <div id="genImageStatus"></div>
-        <div id="genNarrationStatus"></div>
-        <div id="genVideoStatus"></div>
-        <input id="ai_pexelsQuery">
-        <div id="pexelsStatus"></div>
-        <div id="pexelsResults"></div>
       </div>
     `;
   },
@@ -777,7 +761,13 @@ const Modules = {
               <span class="tag">${esc(s.platform)}</span>
               <b>${esc(s.title)}</b>
               <span class="muted">담당 ${esc(s.assignee)} · 게시예정 ${esc(s.date)}${s.time ? " " + esc(s.time) : ""}</span>
-              ${s.imageLinks && s.imageLinks.length > 1 ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">📰 게시물 ${s.imageLinks.length}장</a>` : s.imageLink ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">🖼 이미지</a>` : ""}
+              ${
+                s.imageLinks && s.imageLinks.length > 1
+                  ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">${s.contentType === "shorts" ? "🎬 장면 이미지" : "📰 게시물"} ${s.imageLinks.length}장</a>`
+                  : s.imageLink
+                  ? `<a href="${esc(s.imageLink)}" target="_blank" rel="noopener" class="tag">🖼 이미지</a>`
+                  : ""
+              }
               ${s.videoLink ? `<a href="${esc(s.videoLink)}" target="_blank" rel="noopener" class="tag">🎬 동영상</a>` : ""}
             </div>
             <span>
@@ -821,7 +811,8 @@ const Modules = {
             <p style="font-size:13px; margin:8px 0;">💡 ${esc(t.hook)}</p>
             <p class="muted" style="font-size:12px;">${esc(t.reason)}</p>
             <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
-              <button class="btn btn-primary btn-tiny" data-use-trend="${i}">🤖 이걸로 자동 콘텐츠 만들기</button>
+              <button class="btn btn-primary btn-tiny" data-use-trend-shorts="${i}">🎬 쇼츠 스튜디오에서 만들기</button>
+              <button class="btn btn-secondary btn-tiny" data-use-trend-post="${i}">📰 게시물 스튜디오에서 만들기</button>
             </div>
           </div>
         `
@@ -1019,7 +1010,7 @@ const Modules = {
       <div id="pexelsResults" class="ai-image-gallery"></div>
 
       <div style="margin-top:16px; padding:12px; border:1px solid var(--border, #e5e5ea); border-radius:10px;">
-        <p class="hint" style="margin:0 0 8px;">🎬 스크립트(또는 위 주제)를 장면별 콘티로 나누고, 각 장면마다 어울리는 이미지를 Pexels 추천/AI 생성/직접 업로드 중에서 골라 타이틀 자막까지 입힌 다음, "일반 게시물용 대표 이미지 + 릴스 영상"을 한 세트로 자동 완성할 수 있어요.</p>
+        <p class="hint" style="margin:0 0 8px;">🎬 스크립트(또는 위 주제)를 장면별 콘티로 나누고, 각 장면마다 어울리는 이미지를 Pexels 추천/AI 생성/직접 업로드 중에서 골라 첨부할 수 있어요(자막은 합성하지 않아요).</p>
         <div class="form-grid">
           <label>스크립트 (비워두면 위 주제로 새로 만들어요) <textarea id="ai_script" rows="3" placeholder="이미 써둔 대본이 있다면 붙여넣으세요">${esc(item.script || "")}</textarea></label>
           <label>장면 수
@@ -1032,10 +1023,9 @@ const Modules = {
         </div>
         <div id="storyboardScenes"></div>
         <div class="modal-actions" id="storyboardAssembleRow" style="justify-content:flex-start; margin-top:6px; display:none; align-items:center; gap:10px; flex-wrap:wrap;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">장면 자막 글자 크기 <input type="range" id="ai_titleFontSize" min="28" max="72" value="48"></label>
           <button class="btn btn-secondary btn-tiny" id="fillAllScenesBtn">🪄 빈 장면 AI 이미지로 한번에 채우기</button>
           <span id="fillAllScenesStatus" class="muted"></span>
-          <button class="btn btn-primary btn-tiny" id="assembleSetBtn">🎬📸 릴스+게시물 세트로 완성하기</button>
+          <button class="btn btn-primary btn-tiny" id="assembleSetBtn">📸 첫 장면 이미지를 대표 이미지로 설정</button>
           <span id="assembleSetStatus" class="muted"></span>
         </div>
       </div>
