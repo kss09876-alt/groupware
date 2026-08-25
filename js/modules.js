@@ -666,6 +666,8 @@ const Modules = {
         <p class="hint">장면마다 자막 위치·크기·색상을 따로 조절할 수 있어요. 아래 "기본값"은 새로 만드는 장면에만 적용돼요.</p>
         <div class="modal-actions" style="justify-content:flex-start;">
           <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">기본 글자 크기 <input type="range" id="ai_titleFontSize" min="28" max="72" value="48"></label>
+          <button class="btn btn-secondary btn-tiny" id="fillAllScenesBtn">🪄 빈 장면 AI 이미지로 한번에 채우기</button>
+          <span id="fillAllScenesStatus" class="muted"></span>
         </div>
         <div id="storyboardScenes"></div>
         <div class="modal-actions">
@@ -993,6 +995,8 @@ const Modules = {
         <div id="storyboardScenes"></div>
         <div class="modal-actions" id="storyboardAssembleRow" style="justify-content:flex-start; margin-top:6px; display:none; align-items:center; gap:10px; flex-wrap:wrap;">
           <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);">장면 자막 글자 크기 <input type="range" id="ai_titleFontSize" min="28" max="72" value="48"></label>
+          <button class="btn btn-secondary btn-tiny" id="fillAllScenesBtn">🪄 빈 장면 AI 이미지로 한번에 채우기</button>
+          <span id="fillAllScenesStatus" class="muted"></span>
           <button class="btn btn-primary btn-tiny" id="assembleSetBtn">🎬📸 릴스+게시물 세트로 완성하기</button>
           <span id="assembleSetStatus" class="muted"></span>
         </div>

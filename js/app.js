@@ -1278,6 +1278,7 @@ function wireShortsStudio() {
   goShortsStep(1);
   onStoryboardReadyHook = () => goShortsStep(2);
   $("#genStoryboardBtn")?.addEventListener("click", generateStoryboard);
+  $("#fillAllScenesBtn")?.addEventListener("click", fillAllScenesWithAiImages);
   $$("[data-shorts-back]").forEach((b) =>
     b.addEventListener("click", () => goShortsStep(Number(b.dataset.shortsBack)))
   );
@@ -1374,6 +1375,7 @@ function wireContentStudio() {
   $("#searchPexelsVideoBtn")?.addEventListener("click", () => searchPexelsMedia("videos"));
   $("#composeCardBtn")?.addEventListener("click", composeCardImage);
   $("#genStoryboardBtn")?.addEventListener("click", generateStoryboard);
+  $("#fillAllScenesBtn")?.addEventListener("click", fillAllScenesWithAiImages);
   $("#assembleSetBtn")?.addEventListener("click", assembleContentSet);
   $("#ai_imageFile")?.addEventListener("change", async (e) => {
     const file = e.target.files[0];
@@ -1906,13 +1908,21 @@ async function sceneSetMedia(i, rawDataUrl) {
   }
 }
 
+// 같은 장면에서 버튼을 연타해서 생기는 중복 호출(=낭비되는 API 사용량)을 막기 위한 진행중 표시예요.
+const sceneBusy = new Set();
+// 같은 검색어/프롬프트로 다시 요청하지 않도록 결과를 잠깐 기억해둬요(장면 자막만 바꾸고 다시 눌렀을 때 등).
+const aiImageCache = new Map();
+
 async function sceneGenerateAiImage(i) {
+  if (sceneBusy.has(i)) return;
+  sceneBusy.add(i);
   const statusEl = $(`[data-scene-status="${i}"]`);
   if (statusEl) statusEl.textContent = "생성 중...";
   try {
     const prompt = storyboardScenes[i].imageKeyword || storyboardScenes[i].titleText || "";
-    let dataUrl = null;
-    if (CONFIG.AI_WORKER_URL) {
+    const cacheKey = "ai:" + prompt;
+    let dataUrl = aiImageCache.get(cacheKey) || null;
+    if (!dataUrl && CONFIG.AI_WORKER_URL) {
       try {
         const res = await fetch(CONFIG.AI_WORKER_URL + "/generate-image", {
           method: "POST",
@@ -1933,34 +1943,64 @@ async function sceneGenerateAiImage(i) {
       const blob = await res.blob();
       dataUrl = await fileToDataUrl(blob);
     }
+    aiImageCache.set(cacheKey, dataUrl);
     await sceneSetMedia(i, dataUrl);
   } catch (e) {
     if (statusEl) statusEl.textContent = "";
     alert("장면 이미지 생성에 실패했어요: " + e.message);
+  } finally {
+    sceneBusy.delete(i);
   }
 }
 
+// "각 장면마다 일일이 버튼 누르기"가 번거로우니, 아직 사진이 없는 장면들을 순서대로(=동시에 몰아치지 않고)
+// AI 이미지로 한번에 채워주는 일괄 처리예요. 순차 실행이라 무료 API 분당 제한에도 안전해요.
+async function fillAllScenesWithAiImages() {
+  const btn = $("#fillAllScenesBtn");
+  const statusEl = $("#fillAllScenesStatus");
+  const targets = storyboardScenes.map((s, i) => i).filter((i) => !storyboardScenes[i].mediaDataUrl);
+  if (!targets.length) {
+    if (statusEl) statusEl.textContent = "이미 모든 장면에 이미지가 있어요.";
+    return;
+  }
+  if (btn) btn.disabled = true;
+  for (let n = 0; n < targets.length; n++) {
+    if (statusEl) statusEl.textContent = `장면 채우는 중... (${n + 1}/${targets.length})`;
+    await sceneGenerateAiImage(targets[n]);
+  }
+  if (statusEl) statusEl.textContent = "완료! 마음에 안 드는 장면은 각각 다시 골라도 돼요.";
+  if (btn) btn.disabled = false;
+}
+
 async function sceneSearchPexels(i) {
+  if (sceneBusy.has(i)) return;
+  sceneBusy.add(i);
   const statusEl = $(`[data-scene-status="${i}"]`);
   const optionsEl = $(`[data-scene-options="${i}"]`);
   const query = storyboardScenes[i].imageKeyword || storyboardScenes[i].titleText || "";
   if (!CONFIG.AI_WORKER_URL) {
+    sceneBusy.delete(i);
     alert("AI Worker 주소가 설정되어 있지 않아요.");
     return;
   }
   if (statusEl) statusEl.textContent = "검색 중...";
   if (optionsEl) optionsEl.innerHTML = "";
   try {
-    const res = await fetch(CONFIG.AI_WORKER_URL + "/search-media", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, type: "photos", perPage: 6 }),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data || data.error) {
-      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    const cacheKey = "pexels:" + query;
+    let items = aiImageCache.get(cacheKey);
+    if (!items) {
+      const res = await fetch(CONFIG.AI_WORKER_URL + "/search-media", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, type: "photos", perPage: 6 }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.error) {
+        throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+      }
+      items = data.items || [];
+      aiImageCache.set(cacheKey, items);
     }
-    const items = data.items || [];
     if (!items.length) {
       if (statusEl) statusEl.textContent = "검색 결과가 없어요.";
       return;
@@ -1990,6 +2030,8 @@ async function sceneSearchPexels(i) {
   } catch (e) {
     if (statusEl) statusEl.textContent = "";
     alert("Pexels 검색에 실패했어요: " + e.message);
+  } finally {
+    sceneBusy.delete(i);
   }
 }
 
