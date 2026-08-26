@@ -70,6 +70,7 @@ const DEFAULTS = {
     city: "",
     date: "",
     news: [],
+    newsError: "",
     weather: null,
   },
 };
@@ -259,6 +260,8 @@ const Modules = {
               </div></div>`
                   )
                   .join("")
+              : isToday && data.newsError
+              ? `<div class="empty">뉴스를 가져오지 못했어요: ${esc(data.newsError)}<br><span class="muted" style="font-size:12.5px;">Cloudflare Worker에 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 환경변수가 설정·배포됐는지 확인해주세요.</span></div>`
               : `<div class="empty">${isToday ? "뉴스를 찾지 못했어요." : "잠시 후 자동으로 오늘의 뉴스를 받아와요. 바로 보고 싶으면 위 새로고침을 눌러주세요."}</div>`
           }
         </div>

@@ -1200,6 +1200,7 @@ async function fetchIssueNewsBundle(customKeywords) {
   ];
   if (customKeywords) queries.push({ category: "관심 키워드", q: customKeywords });
 
+  let firstError = "";
   const lists = await Promise.all(
     queries.map(async ({ category, q }) => {
       try {
@@ -1209,9 +1210,13 @@ async function fetchIssueNewsBundle(customKeywords) {
           body: JSON.stringify({ query: q, display: 4 }),
         });
         const data = await res.json().catch(() => null);
-        if (!res.ok || !data || data.error) return [];
+        if (!res.ok || !data || data.error) {
+          if (!firstError) firstError = (data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")";
+          return [];
+        }
         return (data.items || []).map((it) => ({ ...it, category }));
       } catch (e) {
+        if (!firstError) firstError = e.message || "네트워크 오류";
         return [];
       }
     })
@@ -1225,7 +1230,7 @@ async function fetchIssueNewsBundle(customKeywords) {
       news.push(item);
     }
   }
-  return news;
+  return { news, error: news.length ? "" : firstError };
 }
 
 async function fetchIssueWeather(city) {
@@ -1257,13 +1262,14 @@ async function fetchDailyIssues() {
   if (btn) btn.disabled = true;
   if (statusEl) statusEl.textContent = "가져오는 중...";
   try {
-    const news = await fetchIssueNewsBundle(keywords);
+    const { news, error: newsError } = await fetchIssueNewsBundle(keywords);
     const weather = await fetchIssueWeather(city);
     const data = await loadModule("issues", true);
     data.keywords = keywords;
     data.city = city;
     data.date = todayStr();
     data.news = news;
+    data.newsError = newsError || "";
     data.weather = weather;
     await saveModule("issues", data);
     refreshCurrentTab();
@@ -1283,11 +1289,12 @@ async function autoFetchDailyIssuesIfStale() {
   try {
     const cached = await loadModule("issues");
     if (cached.date === todayStr()) return;
-    const news = await fetchIssueNewsBundle(cached.keywords || "");
+    const { news, error: newsError } = await fetchIssueNewsBundle(cached.keywords || "");
     const weather = await fetchIssueWeather(cached.city || "");
     const fresh = await loadModule("issues", true);
     fresh.date = todayStr();
     fresh.news = news;
+    fresh.newsError = newsError || "";
     fresh.weather = weather;
     await saveModule("issues", fresh);
     if (currentTab === "issues" || currentTab === "dashboard") refreshCurrentTab();
