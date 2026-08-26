@@ -22,6 +22,11 @@ let postActiveTab = "text"; // "text" | "image" | "logo" — 오른쪽 설정 �
 // 콘텐츠 스튜디오(팝업 대신 전용 페이지) 상태 — 지금 편집 중인 SNS 초안의 id와 자동저장 타이머
 let studioDraftId = null;
 let studioSaveTimer = null;
+// 게시물 스튜디오는 "들어가기만 해도 목록에 뜨는" 걸 막기 위해, 드라이브에 바로 쓰지 않고
+// 메모리에만 들고 있다가 1분 이상 머무르면(또는 검토요청을 실제로 누르면) 그때 등록해요.
+let postDraftItem = null; // 아직 드라이브(SNS 운영 목록)에 등록되지 않은 초안 객체
+let postDraftCommitted = true; // 지금 studioDraftId가 이미 드라이브에 등록됐는지 여부
+let postCommitTimer = null;
 // 쇼츠 스튜디오(대본→콘티→완성 3단계 마법사)에서, 콘티가 만들어졌을 때 추가로 실행할 훅
 let onStoryboardReadyHook = null;
 // "콘텐츠 등록" 폼으로 넘어갈 때까지 잠깐 들고 있는 첨부 미디어 (저장 시 드라이브에 업로드됨)
@@ -200,6 +205,9 @@ const ctx = {
   get studioDraftId() {
     return studioDraftId;
   },
+  get postDraftItem() {
+    return postDraftItem;
+  },
   get shortsDraft() {
     return shortsDraft;
   },
@@ -237,6 +245,7 @@ $$(".nav-item").forEach((btn) => {
 
 async function goTab(tab) {
   if (tab !== "shorts") shortsDraft = null; // 쇼츠 스튜디오를 벗어나면 로컬 임시저장 상태를 비워요.
+  if (tab !== "postStudio") discardUncommittedPostDraft(); // 게시물 스튜디오를 1분 안에 벗어나면 초안을 등록하지 않고 버려요.
   currentTab = tab;
   if (tab === "corp") corpSubTab = "info";
   if (tab === "sns") snsSubTab = "content";
@@ -1335,6 +1344,7 @@ async function useTrendInPostStudio(trend) {
 // 초안을 드라이브에 바로 저장해서 "콘텐츠 운영" 목록에 즉시 나타나고, 이후 입력/생성한 내용도
 // 자동으로(디바운스해서) 계속 저장돼요. 언제든 나갔다가 "이어서 작성"으로 돌아올 수 있어요.
 async function enterContentStudio(prefill) {
+  discardUncommittedPostDraft();
   const data = await loadModule("sns");
   const item = {
     id: uid(),
@@ -1421,6 +1431,7 @@ function syncShortsDraftFieldsFromDom() {
 }
 
 async function enterShortsStudio(prefill) {
+  discardUncommittedPostDraft();
   shortsDraft = loadShortsDraftFromLocal() || {
     platform: "인스타그램",
     topic: "",
@@ -1717,26 +1728,37 @@ function scheduleStudioAutosave() {
   studioSaveTimer = setTimeout(saveStudioDraftNow, 900);
 }
 
+function applyStudioFieldsTo(item) {
+  item.platform = $("#ai_platform")?.value || item.platform;
+  item.title = $("#ai_title")?.value.trim() || "(제목없음)";
+  item.assignee = $("#ai_assignee")?.value || "";
+  item.date = $("#ai_date")?.value || item.date;
+  item.time = $("#ai_time")?.value || item.time;
+  item.scheduledAt = `${item.date}T${item.time}`;
+  item.approver = $("#ai_approver")?.value.trim() || "";
+  item.topic = $("#ai_topic")?.value || "";
+  item.tone = $("#ai_tone")?.value || "";
+  item.content = $("#ai_caption")?.value || "";
+  item.hashtags = $("#ai_hashtags")?.textContent || "";
+  item.imagePrompt = $("#ai_imgPrompt")?.value || "";
+  item.script = $("#ai_script")?.value || "";
+}
+
 async function saveStudioDraftNow() {
   if (!studioDraftId) return;
   const statusEl = $("#studioSaveStatus");
   try {
+    // 게시물 스튜디오에서 아직 드라이브에 등록 전(1분 안 지남)이면, 메모리상의 초안에만
+    // 반영해두고 실제 드라이브 저장은 하지 않아요 (1분이 지나거나 검토요청을 누르면 등록돼요).
+    if (!postDraftCommitted && postDraftItem && postDraftItem.id === studioDraftId) {
+      applyStudioFieldsTo(postDraftItem);
+      if (statusEl) statusEl.textContent = "임시 저장됨 (1분 뒤 목록에 자동 등록)";
+      return;
+    }
     const data = await loadModule("sns", true);
     const item = data.items.find((s) => s.id === studioDraftId);
     if (!item) return;
-    item.platform = $("#ai_platform")?.value || item.platform;
-    item.title = $("#ai_title")?.value.trim() || "(제목없음)";
-    item.assignee = $("#ai_assignee")?.value || "";
-    item.date = $("#ai_date")?.value || item.date;
-    item.time = $("#ai_time")?.value || item.time;
-    item.scheduledAt = `${item.date}T${item.time}`;
-    item.approver = $("#ai_approver")?.value.trim() || "";
-    item.topic = $("#ai_topic")?.value || "";
-    item.tone = $("#ai_tone")?.value || "";
-    item.content = $("#ai_caption")?.value || "";
-    item.hashtags = $("#ai_hashtags")?.textContent || "";
-    item.imagePrompt = $("#ai_imgPrompt")?.value || "";
-    item.script = $("#ai_script")?.value || "";
+    applyStudioFieldsTo(item);
     await saveModule("sns", data);
     if (statusEl) statusEl.textContent = "자동 저장됨 · " + new Date().toLocaleTimeString("ko-KR");
   } catch (e) {
@@ -2335,6 +2357,9 @@ async function postSyncToDrive() {
       s.driveLink = uploaded.webViewLink || "";
       s._syncedDataUrl = s.composedDataUrl;
     }
+    // 아직 SNS 운영 목록에 등록 전(1분 안 지남)이면, 파일은 방금 올려뒀으니 여기서는
+    // 그대로 두고 나중에 commitPostDraftToDrive에서 한번에 연결해요.
+    if (!postDraftCommitted) return;
     const data = await loadModule("sns", true);
     const item = data.items.find((x) => x.id === studioDraftId);
     if (item) {
@@ -2460,9 +2485,44 @@ async function postSearchPexels() {
   }
 }
 
+// 아직 드라이브에 등록 전인(=1분이 안 지난) 초안은 그냥 버려요 — 타이머를 지우고
+// 메모리에서만 없애면, "들어갔다 나가기"만으로는 SNS 운영 목록에 아무 흔적도 안 남아요.
+function discardUncommittedPostDraft() {
+  if (!postDraftCommitted) {
+    clearTimeout(postCommitTimer);
+    postCommitTimer = null;
+    postDraftItem = null;
+    postDraftCommitted = true;
+  }
+}
+
+// 게시물 스튜디오에 1분 이상 머물렀을 때(또는 검토요청을 실제로 눌렀을 때) 그제서야
+// 드라이브의 SNS 운영 목록에 실제로 등록해요. 그 전까지 만든 슬라이드 이미지는
+// postSyncToDrive가 이미 드라이브에 파일로는 올려두니, 등록되는 순간 그 링크들을 한번에 붙여요.
+async function commitPostDraftToDrive() {
+  if (postDraftCommitted || !postDraftItem || studioDraftId !== postDraftItem.id) return;
+  try {
+    const data = await loadModule("sns", true);
+    if (!data.items.some((x) => x.id === postDraftItem.id)) {
+      const composed = (postSlides || []).filter((s) => s.driveLink);
+      if (composed.length) {
+        postDraftItem.imageLinks = composed.map((s) => s.driveLink);
+        postDraftItem.imageFileIds = composed.map((s) => s.driveFileId);
+        postDraftItem.imageLink = postDraftItem.imageLinks[0] || "";
+        postDraftItem.imageFileId = postDraftItem.imageFileIds[0] || "";
+      }
+      data.items.push(postDraftItem);
+      await saveModule("sns", data);
+    }
+    postDraftCommitted = true;
+  } catch (e) {
+    console.error("게시물 초안 자동 등록 실패", e);
+  }
+}
+
 async function enterPostStudio(prefill) {
   shortsDraft = null;
-  const data = await loadModule("sns");
+  discardUncommittedPostDraft();
   const item = {
     id: uid(),
     platform: (prefill && prefill.platform) || "인스타그램",
@@ -2483,9 +2543,11 @@ async function enterPostStudio(prefill) {
     contentType: "post",
     createdAt: nowStr(),
   };
-  data.items.push(item);
-  await saveModule("sns", data);
+  postDraftItem = item;
+  postDraftCommitted = false;
   studioDraftId = item.id;
+  clearTimeout(postCommitTimer);
+  postCommitTimer = setTimeout(commitPostDraftToDrive, 60000);
   postSlides = [newCoverSlide()];
   if (prefill && prefill.heading) postSlides[0].heading = prefill.heading;
   postActiveSlideIdx = 0;
@@ -2501,6 +2563,8 @@ async function enterPostStudio(prefill) {
 
 async function continuePostDraft(id) {
   shortsDraft = null;
+  discardUncommittedPostDraft();
+  postDraftCommitted = true; // 이미 드라이브에 등록된 기존 초안을 이어서 여는 거예요.
   studioDraftId = id;
   postSlides = [newCoverSlide()];
   postActiveSlideIdx = 0;
@@ -2557,6 +2621,8 @@ function wirePostStudio() {
     try {
       const draftId = studioDraftId;
       clearTimeout(postSyncTimer);
+      clearTimeout(postCommitTimer);
+      await commitPostDraftToDrive(); // 아직 1분이 안 지나 목록에 등록 전이었다면, 검토요청을 누른 지금 바로 등록해요.
       await postSyncToDrive(); // 슬라이드는 만들 때마다 이미 자동 저장되지만, 마지막 변경분까지 확실히 반영해요.
       const data2 = await loadModule("sns", true);
       const item2 = data2.items.find((s) => s.id === draftId);
@@ -2566,6 +2632,8 @@ function wirePostStudio() {
         await saveModule("sns", data2);
       }
       studioDraftId = null;
+      postDraftItem = null;
+      postDraftCommitted = true;
       postSlides = [];
       snsSubTab = "content";
       goTab("sns");

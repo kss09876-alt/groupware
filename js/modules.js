@@ -801,7 +801,9 @@ const Modules = {
   // 지금 고른 슬라이드를 편집하면 가운데 미리보기가 바로 갱신돼요.
   async postStudio(ctx) {
     const data = await ctx.load("sns");
-    const item = data.items.find((s) => s.id === ctx.studioDraftId);
+    // 1분 이내라 아직 드라이브(SNS 운영 목록)에 등록 전인 초안은 data.items에는 없고
+    // ctx.postDraftItem(메모리)에만 있어요 — 목록에 미리 뜨지 않게 하기 위해서예요.
+    const item = data.items.find((s) => s.id === ctx.studioDraftId) || (ctx.postDraftItem && ctx.postDraftItem.id === ctx.studioDraftId ? ctx.postDraftItem : null);
     if (!item) {
       return `<div class="empty">게시물 초안을 준비하고 있어요. 잠시 후 다시 시도해주세요.</div>`;
     }
@@ -812,7 +814,7 @@ const Modules = {
       </div>
       <div class="panel">
         <h3>게시물 스튜디오</h3>
-        <p class="hint">먼저 "텍스트" 탭에서 슬라이드에 들어갈 문구를 입력해주세요 — 그 문구를 바탕으로 "이미지" 탭에서 AI 이미지 생성/Pexels 추천을 바로 쓸 수 있어요.</p>
+        <p class="hint">먼저 "텍스트" 탭에서 슬라이드에 들어갈 문구를 입력해주세요 — 그 문구를 바탕으로 "이미지" 탭에서 AI 이미지 생성/Pexels 추천을 바로 쓸 수 있어요. (1분 이상 머무르거나 검토요청을 누르면 그때 SNS 운영 목록에 등록돼요. 그냥 들어왔다 나가면 아무것도 남지 않아요.)</p>
         <div class="form-grid">
           <label>주제/제목 <input id="ai_topic" value="${esc(item.topic || "")}" placeholder="예: 이달의 추천템 5가지"></label>
           <label>승인자 이메일 <input id="ai_approver" value="${esc(item.approver || "")}" placeholder="approver@company.com"></label>
