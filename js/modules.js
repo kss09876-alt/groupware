@@ -220,15 +220,16 @@ const Modules = {
     return `
       <div class="panel">
         <h3>오늘의 이슈 설정</h3>
-        <p class="hint">관심 키워드로 관련 뉴스를 찾아드리고, 도시를 입력하면 오늘의 날씨도 보여드려요.</p>
+        <p class="hint">정치·사회·국제 뉴스와, 법인정보의 사업목적을 바탕으로 한 콘텐츠/스타트업/지원사업 관련 뉴스를 매일 자동으로 새로 받아와요. 도시를 입력해두면 오늘 날씨도 함께 보여드려요. 아래 "추가 키워드"는 그 외에 더 챙겨보고 싶은 주제가 있을 때만 입력하면 돼요.</p>
         <div class="form-grid">
-          <label>관심 키워드 (쉼표로 여러 개) <input id="issuesKeywords" value="${esc(data.keywords || "")}" placeholder="예: 스타트업, 우리 업종, 마케팅"></label>
+          <label>추가 키워드 (선택, 쉼표로 여러 개) <input id="issuesKeywords" value="${esc(data.keywords || "")}" placeholder="예: 우리 업종, 특정 마케팅 트렌드"></label>
           <label>도시(날씨) <input id="issuesCity" value="${esc(data.city || "")}" placeholder="예: 서울"></label>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" id="fetchIssuesBtn">${isToday && data.news.length ? "새로고침" : "오늘의 이슈 가져오기"}</button>
+          <button class="btn btn-primary" id="fetchIssuesBtn">지금 새로고침</button>
           <span id="issuesStatus" class="muted"></span>
         </div>
+        <p class="hint" style="margin-top:6px;">${isToday ? "오늘 자로 자동 업데이트됐어요." : "잠시 후 오늘 자 뉴스로 자동 업데이트돼요."}</p>
       </div>
 
       <div class="grid grid-2">
@@ -237,7 +238,7 @@ const Modules = {
           ${
             weather
               ? `<div class="list-row"><div><span class="tag">날씨</span> ${esc(weather.city || "")} ${weather.temp}°C (체감 ${weather.feelsLike}°C) · ${esc(weather.description || "")}</div></div>`
-              : `<div class="list-row"><div class="muted">도시를 입력하고 새로고침하면 오늘 날씨를 보여드려요.</div></div>`
+              : `<div class="list-row"><div class="muted">도시를 입력해두면 오늘 날씨를 보여드려요.</div></div>`
           }
           <div class="list-row"><div><span class="tag">일정</span> 오늘 일정 ${todayEvents.length}건${todayEvents.length ? " — " + todayEvents.map((e) => esc(e.title)).join(", ") : ""}</div></div>
           <div class="list-row"><div><span class="tag">결재</span> 내가 결재할 문서 ${myPending.length}건</div></div>
@@ -252,12 +253,13 @@ const Modules = {
                   .map(
                     (n) => `
               <div class="list-row"><div>
+                <span class="tag">${esc(n.category || "뉴스")}</span>
                 <a href="${esc(n.link)}" target="_blank" rel="noopener"><b>${esc(n.title)}</b></a>
                 <div class="muted" style="font-size:12.5px; margin-top:2px;">${esc(n.description)}</div>
               </div></div>`
                   )
                   .join("")
-              : `<div class="empty">${isToday ? "뉴스를 찾지 못했어요." : "아직 오늘의 뉴스를 가져오지 않았어요. 위에서 키워드를 입력하고 가져와주세요."}</div>`
+              : `<div class="empty">${isToday ? "뉴스를 찾지 못했어요." : "잠시 후 자동으로 오늘의 뉴스를 받아와요. 바로 보고 싶으면 위 새로고침을 눌러주세요."}</div>`
           }
         </div>
       </div>

@@ -111,6 +111,7 @@ async function onSignedIn(user) {
   if (dataFolderId) {
     showScreen("app");
     await goTab("dashboard");
+    autoFetchDailyIssuesIfStale();
     return;
   }
 
@@ -126,6 +127,7 @@ async function onSignedIn(user) {
       localStorage.setItem("gw_folderId", dataFolderId);
       showScreen("app");
       await goTab("dashboard");
+      autoFetchDailyIssuesIfStale();
       return;
     }
   } catch (e) {
@@ -514,6 +516,7 @@ function bindTabEvents(tab) {
 
   if (tab === "issues") {
     $("#fetchIssuesBtn")?.addEventListener("click", fetchDailyIssues);
+    autoFetchDailyIssuesIfStale();
   }
 
   if (tab === "corp") {
@@ -1178,7 +1181,70 @@ async function fetchDailyTrends() {
 // ---------------- 오늘의 이슈 (데일리 뉴스 + 날씨) ----------------
 // 뉴스: 네이버 뉴스 검색 API(한국 뉴스에 특화, 무료), 날씨: OpenWeatherMap(무료 티어) —
 // 둘 다 Cloudflare Worker(/daily-news, /daily-weather)를 통해 키를 숨긴 채 호출해요.
-// 하루 한 번씩만 새로 받아오면 되니, sns.dailyTrends처럼 날짜와 함께 캐시해둬요.
+// 정치/사회/국제(세계) 같은 고정 카테고리 + 우리 회사(법인정보의 사업목적)와 관련된
+// 맞춤 키워드(콘텐츠 스타트업/지원사업 등)를 자동으로 조합해서 매일 하루 한 번, 사람이
+// 버튼을 누르지 않아도 로그인 시/탭 진입 시 조용히 새로 받아와요. (날짜가 바뀌면 갱신)
+const ISSUE_DEFAULT_CATEGORIES = ["정치", "사회", "국제"];
+
+function issuePersonalizedQuery(corp) {
+  const businessContext = corp && corp.registeredPurposes && corp.registeredPurposes.length ? corp.registeredPurposes.join(" ") : corp && corp.name ? corp.name : "";
+  return (businessContext ? businessContext + " " : "") + "콘텐츠 스타트업 지원사업";
+}
+
+// 카테고리별/맞춤별로 나눠서 여러 번 검색한 뒤 링크 기준으로 중복 제거해 합쳐요.
+async function fetchIssueNewsBundle(customKeywords) {
+  const corp = await loadModule("corp");
+  const queries = [
+    ...ISSUE_DEFAULT_CATEGORIES.map((c) => ({ category: c, q: c })),
+    { category: "맞춤", q: issuePersonalizedQuery(corp) },
+  ];
+  if (customKeywords) queries.push({ category: "관심 키워드", q: customKeywords });
+
+  const lists = await Promise.all(
+    queries.map(async ({ category, q }) => {
+      try {
+        const res = await fetch(CONFIG.AI_WORKER_URL + "/daily-news", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: q, display: 4 }),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || data.error) return [];
+        return (data.items || []).map((it) => ({ ...it, category }));
+      } catch (e) {
+        return [];
+      }
+    })
+  );
+  const seen = new Set();
+  const news = [];
+  for (const list of lists) {
+    for (const item of list) {
+      if (!item.link || seen.has(item.link)) continue;
+      seen.add(item.link);
+      news.push(item);
+    }
+  }
+  return news;
+}
+
+async function fetchIssueWeather(city) {
+  if (!city) return null;
+  try {
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/daily-weather", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ city }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data && !data.error) return data;
+  } catch (e) {
+    // 날씨는 부가 정보라, 실패해도 뉴스는 그대로 보여줘요.
+  }
+  return null;
+}
+
+// 버튼을 눌러 수동으로 새로고침할 때 (관심 키워드/도시 입력값 반영)
 async function fetchDailyIssues() {
   const btn = $("#fetchIssuesBtn");
   const statusEl = $("#issuesStatus");
@@ -1188,50 +1254,45 @@ async function fetchDailyIssues() {
     alert("AI Worker 주소가 설정되어 있지 않아요.");
     return;
   }
-  if (!keywords) {
-    alert("관심 키워드를 먼저 입력해주세요.");
-    return;
-  }
   if (btn) btn.disabled = true;
   if (statusEl) statusEl.textContent = "가져오는 중...";
   try {
-    const newsRes = await fetch(CONFIG.AI_WORKER_URL + "/daily-news", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: keywords, display: 10 }),
-    });
-    const newsData = await newsRes.json().catch(() => null);
-    if (!newsRes.ok || !newsData || newsData.error) {
-      throw new Error((newsData && (newsData.detail || newsData.error)) || "뉴스 서버 오류 (" + newsRes.status + ")");
-    }
-
-    let weather = null;
-    if (city) {
-      try {
-        const weatherRes = await fetch(CONFIG.AI_WORKER_URL + "/daily-weather", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ city }),
-        });
-        const weatherData = await weatherRes.json().catch(() => null);
-        if (weatherRes.ok && weatherData && !weatherData.error) weather = weatherData;
-      } catch (e) {
-        // 날씨는 부가 정보라, 실패해도 뉴스는 그대로 보여줘요.
-      }
-    }
-
+    const news = await fetchIssueNewsBundle(keywords);
+    const weather = await fetchIssueWeather(city);
     const data = await loadModule("issues", true);
     data.keywords = keywords;
     data.city = city;
     data.date = todayStr();
-    data.news = newsData.items || [];
+    data.news = news;
     data.weather = weather;
     await saveModule("issues", data);
     refreshCurrentTab();
   } catch (e) {
+    alert("오늘의 이슈를 가져오는 데 실패했어요: " + e.message);
+  } finally {
     if (statusEl) statusEl.textContent = "";
     if (btn) btn.disabled = false;
-    alert("오늘의 이슈를 가져오는 데 실패했어요: " + e.message);
+  }
+}
+
+// 로그인 직후/대시보드·오늘의 이슈 탭 진입 시 자동으로 호출돼요. 오늘 날짜로 이미
+// 받아둔 데이터가 있으면 그냥 넘어가고, 날짜가 바뀌었을 때만 조용히 새로 받아와요.
+// (관심 키워드를 입력하지 않아도 정치/사회/국제 + 우리 회사 맞춤 뉴스는 항상 자동으로 채워져요.)
+async function autoFetchDailyIssuesIfStale() {
+  if (!CONFIG.AI_WORKER_URL) return;
+  try {
+    const cached = await loadModule("issues");
+    if (cached.date === todayStr()) return;
+    const news = await fetchIssueNewsBundle(cached.keywords || "");
+    const weather = await fetchIssueWeather(cached.city || "");
+    const fresh = await loadModule("issues", true);
+    fresh.date = todayStr();
+    fresh.news = news;
+    fresh.weather = weather;
+    await saveModule("issues", fresh);
+    if (currentTab === "issues" || currentTab === "dashboard") refreshCurrentTab();
+  } catch (e) {
+    console.error("오늘의 이슈 자동 업데이트 실패:", e);
   }
 }
 
