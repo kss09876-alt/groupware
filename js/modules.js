@@ -221,7 +221,7 @@ const Modules = {
     return `
       <div class="panel">
         <h3>오늘의 이슈 설정</h3>
-        <p class="hint">정치·사회·국제 뉴스와, 법인정보의 사업목적을 바탕으로 한 콘텐츠/스타트업/지원사업 관련 뉴스를 매일 자동으로 새로 받아와요. 도시를 입력해두면 오늘 날씨도 함께 보여드려요. 아래 "추가 키워드"는 그 외에 더 챙겨보고 싶은 주제가 있을 때만 입력하면 돼요.</p>
+        <p class="hint">우리 회사(콘텐츠 스타트업)에 실제로 도움이 될 만한 지원사업/창업지원금, SNS·콘텐츠 마케팅 트렌드, AI 콘텐츠 제작 기술 뉴스를 매일 자동으로 새로 받아와요. 도시를 입력해두면 오늘 날씨도 함께 보여드려요. 아래 "추가 키워드"는 그 외에 더 챙겨보고 싶은 주제가 있을 때만 입력하면 돼요.</p>
         <div class="form-grid">
           <label>추가 키워드 (선택, 쉼표로 여러 개) <input id="issuesKeywords" value="${esc(data.keywords || "")}" placeholder="예: 우리 업종, 특정 마케팅 트렌드"></label>
           <label>도시(날씨) <input id="issuesCity" value="${esc(data.city || "")}" placeholder="예: 서울"></label>

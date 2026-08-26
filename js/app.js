@@ -1181,22 +1181,24 @@ async function fetchDailyTrends() {
 // ---------------- 오늘의 이슈 (데일리 뉴스 + 날씨) ----------------
 // 뉴스: 네이버 뉴스 검색 API(한국 뉴스에 특화, 무료), 날씨: OpenWeatherMap(무료 티어) —
 // 둘 다 Cloudflare Worker(/daily-news, /daily-weather)를 통해 키를 숨긴 채 호출해요.
-// 정치/사회/국제(세계) 같은 고정 카테고리 + 우리 회사(법인정보의 사업목적)와 관련된
-// 맞춤 키워드(콘텐츠 스타트업/지원사업 등)를 자동으로 조합해서 매일 하루 한 번, 사람이
-// 버튼을 누르지 않아도 로그인 시/탭 진입 시 조용히 새로 받아와요. (날짜가 바뀌면 갱신)
-const ISSUE_DEFAULT_CATEGORIES = ["정치", "사회", "국제"];
-
-function issuePersonalizedQuery(corp) {
-  const businessContext = corp && corp.registeredPurposes && corp.registeredPurposes.length ? corp.registeredPurposes.join(" ") : corp && corp.name ? corp.name : "";
-  return (businessContext ? businessContext + " " : "") + "콘텐츠 스타트업 지원사업";
+// 일반 시사(정치/사회/국제) 대신, 콘텐츠 스타트업인 우리 회사에 실제로 도움이 될 만한
+// 3가지 주제로 고정해서 매일 하루 한 번, 사람이 버튼을 누르지 않아도 로그인 시/탭 진입 시
+// 조용히 새로 받아와요. (날짜가 바뀌면 갱신)
+//   1) 지원사업: 우리 회사 사업목적(법인정보) + 정부 지원사업/창업지원금
+//   2) SNS·콘텐츠 마케팅 트렌드
+//   3) AI 콘텐츠 제작 기술
+function issueSupportQuery(corp) {
+  const businessContext = corp && corp.registeredPurposes && corp.registeredPurposes.length ? corp.registeredPurposes.join(" ") : corp && corp.name ? corp.name : "콘텐츠 스타트업";
+  return businessContext + " 지원사업 창업지원금";
 }
 
-// 카테고리별/맞춤별로 나눠서 여러 번 검색한 뒤 링크 기준으로 중복 제거해 합쳐요.
+// 주제별로 나눠서 여러 번 검색한 뒤 링크 기준으로 중복 제거해 합쳐요.
 async function fetchIssueNewsBundle(customKeywords) {
   const corp = await loadModule("corp");
   const queries = [
-    ...ISSUE_DEFAULT_CATEGORIES.map((c) => ({ category: c, q: c })),
-    { category: "맞춤", q: issuePersonalizedQuery(corp) },
+    { category: "지원사업", q: issueSupportQuery(corp) },
+    { category: "SNS·콘텐츠 트렌드", q: "SNS 콘텐츠 마케팅 트렌드" },
+    { category: "AI 콘텐츠 기술", q: "AI 콘텐츠 제작 기술" },
   ];
   if (customKeywords) queries.push({ category: "관심 키워드", q: customKeywords });
 
@@ -1207,7 +1209,7 @@ async function fetchIssueNewsBundle(customKeywords) {
         const res = await fetch(CONFIG.AI_WORKER_URL + "/daily-news", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: q, display: 4 }),
+          body: JSON.stringify({ query: q, display: 5 }),
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data || data.error) {
