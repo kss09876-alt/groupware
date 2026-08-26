@@ -208,6 +208,9 @@ const ctx = {
   get postDraftItem() {
     return postDraftItem;
   },
+  get isCalendarLinked() {
+    return Drive.isCalendarLinked();
+  },
   get shortsDraft() {
     return shortsDraft;
   },
@@ -836,26 +839,57 @@ function bindTabEvents(tab) {
       openModal(Modules.eventForm());
       $("#saveEventBtn").addEventListener("click", async () => {
         const data = await loadModule("calendar");
-        data.items.push({
+        const newEvent = {
           id: uid(),
           title: $("#f_title").value || "(제목없음)",
           date: $("#f_date").value || todayStr(),
           endDate: $("#f_endDate").value || "",
           memo: $("#f_memo").value,
-        });
+          googleEventId: null,
+        };
+        data.items.push(newEvent);
         await saveModule("calendar", data);
         closeModal();
         refreshCurrentTab();
+        syncEventToGoogleCalendar(newEvent);
       });
     });
     $$("[data-del-event]").forEach((b) =>
       b.addEventListener("click", async () => {
         const data = await loadModule("calendar");
+        const target = data.items.find((e) => e.id === b.dataset.delEvent);
         data.items = data.items.filter((e) => e.id !== b.dataset.delEvent);
         await saveModule("calendar", data);
         refreshCurrentTab();
+        if (target?.googleEventId) {
+          Drive.deleteCalendarEvent(target.googleEventId).catch((e) => console.error("구글 캘린더 삭제 동기화 실패:", e));
+        }
       })
     );
+    $("#calendarLinkBtn")?.addEventListener("click", async () => {
+      const statusEl = $("#calendarSyncStatus");
+      if (statusEl) statusEl.textContent = "구글 권한 동의창을 확인해주세요...";
+      try {
+        await Drive.linkGoogleCalendar();
+        if (statusEl) statusEl.textContent = "연동 중... 기존 일정을 올리고 있어요.";
+        await fullSyncCalendarToGoogle();
+        refreshCurrentTab();
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "";
+        alert("구글 캘린더 연동에 실패했어요: " + e.message);
+      }
+    });
+    $("#calendarFullSyncBtn")?.addEventListener("click", async () => {
+      const statusEl = $("#calendarSyncStatus");
+      if (statusEl) statusEl.textContent = "동기화 중...";
+      try {
+        await fullSyncCalendarToGoogle();
+        if (statusEl) statusEl.textContent = "동기화 완료 · " + new Date().toLocaleTimeString("ko-KR");
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "";
+        alert("동기화에 실패했어요: " + e.message);
+      }
+    });
   }
 
   if (tab === "approval") {
@@ -1116,6 +1150,39 @@ async function decideApproval(id, status) {
   }
   await saveModule("approval", data);
   refreshCurrentTab();
+}
+
+// ---------------- 아이폰(구글) 캘린더 연동 ----------------
+// 일정을 새로 만들거나 지울 때마다 호출해서, 구글 캘린더의 "그룹웨어 일정" 전용 캘린더에도
+// 반영해요. 아직 연동(권한 동의)을 안 했으면 그냥 조용히 실패하고 넘어가요 — 일정/캘린더 탭에서
+// "구글 캘린더 연동하기"를 눌러야 시작돼요.
+async function syncEventToGoogleCalendar(evt) {
+  if (!Drive.isCalendarLinked()) return;
+  try {
+    const googleEventId = await Drive.upsertCalendarEvent(evt);
+    const data = await loadModule("calendar", true);
+    const item = data.items.find((e) => e.id === evt.id);
+    if (item) {
+      item.googleEventId = googleEventId;
+      await saveModule("calendar", data);
+    }
+  } catch (e) {
+    console.error("구글 캘린더 동기화 실패:", e);
+  }
+}
+
+// 연동을 처음 켤 때(또는 "지금 전체 다시 동기화"를 누를 때), 이미 등록돼 있던 모든 일정을
+// 한 번에 구글 캘린더로 올려요. 이미 googleEventId가 있는 일정은 새로 만들지 않고 갱신만 해요.
+async function fullSyncCalendarToGoogle() {
+  const data = await loadModule("calendar", true);
+  for (const evt of data.items) {
+    try {
+      evt.googleEventId = await Drive.upsertCalendarEvent(evt);
+    } catch (e) {
+      console.error("일정 동기화 실패:", evt.title, e);
+    }
+  }
+  await saveModule("calendar", data);
 }
 
 async function decideLeave(id, status) {

@@ -6,7 +6,10 @@ const CONFIG = {
   CLIENT_ID: "957720183451-pa3snmiqbq0ke36aaj7saubc6arovion.apps.googleusercontent.com",
   API_KEY: "AIzaSyBXYZF1azXr0CKon5CQ24YYDrknKUzEd44",
   // drive.file 스코프: 이 앱이 만들거나, 사용자가 Picker로 명시적으로 연 파일/폴더에만 접근합니다.
-  SCOPES: "https://www.googleapis.com/auth/drive.file profile email",
+  // calendar.app.created 스코프: 이 앱이 직접 만든 구글 캘린더(예: "그룹웨어 일정")에만 접근해요 —
+  // 사용자의 기존 캘린더/일정은 전혀 건드리지 않는, 구글이 권장하는 저위험 캘린더 스코프예요.
+  // (일정/캘린더 탭의 "아이폰 캘린더 연동" 기능에 쓰여요.)
+  SCOPES: "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.app.created profile email",
   DATA_FOLDER_NAME: "groupware_data",
   // 3) 법인정보 서류를 AI로 자동 분석하는 기능을 쓰려면, Cloudflare Worker를 배포한 뒤
   //    그 주소(https://xxxx.workers.dev 형태)를 아래에 넣으세요. (README.md의 "AI 자동 채우기 설정" 참고)

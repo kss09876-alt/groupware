@@ -559,7 +559,24 @@ const Modules = {
   async calendar(ctx) {
     const data = await ctx.load("calendar");
     const items = [...data.items].sort((a, b) => a.date.localeCompare(b.date));
+    const linked = ctx.isCalendarLinked;
     return `
+      <div class="panel">
+        <h3>아이폰(구글) 캘린더 연동</h3>
+        ${
+          linked
+            ? `<p class="hint">연동됐어요. 이 일정들은 구글 캘린더의 "그룹웨어 일정"에 자동으로 반영돼요. 아이폰에서 설정 → 캘린더 → 계정 → 지금 로그인한 구글 계정을 추가하고 캘린더 동기화를 켜두면 자동으로 보여요.</p>
+             <div class="modal-actions" style="justify-content:flex-start;">
+               <button class="btn btn-secondary btn-tiny" id="calendarFullSyncBtn">지금 전체 다시 동기화</button>
+               <span id="calendarSyncStatus" class="muted"></span>
+             </div>`
+            : `<p class="hint">연동하면, 여기서 만드는 일정이 자동으로 구글 캘린더의 "그룹웨어 일정"이라는 전용 캘린더에 올라가요 (기존 구글 캘린더/일정은 전혀 건드리지 않아요). 아이폰의 캘린더 앱에서 그 구글 계정 동기화만 켜두면 자동으로 보여요.</p>
+             <div class="modal-actions" style="justify-content:flex-start;">
+               <button class="btn btn-primary btn-tiny" id="calendarLinkBtn">구글 캘린더 연동하기</button>
+               <span id="calendarSyncStatus" class="muted"></span>
+             </div>`
+        }
+      </div>
       <div class="toolbar"><button class="btn btn-primary" id="newEventBtn">+ 새 일정</button></div>
       <div class="panel">
         ${items.length ? items.map((e) => `

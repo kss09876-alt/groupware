@@ -279,6 +279,114 @@ const Drive = (() => {
     return { base64, mimeType };
   }
 
+  // ---- 구글 캘린더 연동 (아이폰 캘린더에서 보이게 하기) ----
+  // calendar.app.created 스코프는 "이 앱이 직접 만든 캘린더"에만 접근할 수 있어요.
+  // 그래서 사용자의 기존 캘린더 목록을 검색하는 게 아니라, 한 번 만든 캘린더의 ID를
+  // localStorage에 저장해두고 계속 재사용해요. 아이폰에서는 Settings > 캘린더 > 계정 >
+  // (이 그룹웨어에 로그인한 구글 계정) 을 추가/동기화 켜두면 이 캘린더가 자동으로 보여요.
+  const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
+  const GOOGLE_CALENDAR_ID_KEY = "gw_googleCalendarId";
+  const GOOGLE_CALENDAR_NAME = "그룹웨어 일정";
+
+  async function calFetch(path, options) {
+    const res = await fetch(CALENDAR_API + path, {
+      ...(options || {}),
+      headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json", ...((options && options.headers) || {}) },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const err = new Error(`캘린더 API 오류 (${res.status}): ${text.slice(0, 200)}`);
+      err.status = res.status;
+      throw err;
+    }
+    if (res.status === 204) return null;
+    return res.json();
+  }
+
+  function isCalendarLinked() {
+    return !!localStorage.getItem(GOOGLE_CALENDAR_ID_KEY);
+  }
+
+  // 처음 연동할 때 한 번 호출: 아직 스코프 동의를 안 받았으면 동의창을 띄우고,
+  // "그룹웨어 일정" 캘린더를 (없으면) 새로 만들어서 ID를 저장해요.
+  async function linkGoogleCalendar() {
+    const originalCallback = tokenClient.callback;
+    try {
+      await new Promise((resolve, reject) => {
+        tokenClient.callback = async (resp) => {
+          if (resp.error) {
+            reject(new Error("구글 캘린더 접근 권한 동의가 필요해요."));
+            return;
+          }
+          accessToken = resp.access_token;
+          gapi.client.setToken({ access_token: accessToken });
+          storeToken(accessToken, Number(resp.expires_in) || 3600);
+          resolve();
+        };
+        tokenClient.requestAccessToken({ prompt: "consent" });
+      });
+    } finally {
+      // 로그인 유지용으로 앱이 처음에 등록해둔 콜백으로 되돌려놔요.
+      tokenClient.callback = originalCallback;
+    }
+    return ensureGroupwareCalendar();
+  }
+
+  async function ensureGroupwareCalendar() {
+    const cached = localStorage.getItem(GOOGLE_CALENDAR_ID_KEY);
+    if (cached) return cached;
+    const created = await calFetch("/calendars", {
+      method: "POST",
+      body: JSON.stringify({ summary: GOOGLE_CALENDAR_NAME, description: "그룹웨어 앱의 일정/캘린더 탭과 자동으로 동기화돼요." }),
+    });
+    localStorage.setItem(GOOGLE_CALENDAR_ID_KEY, created.id);
+    return created.id;
+  }
+
+  function addOneDay(dateStr) {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  // 내부 일정(evt: {title, date, endDate, memo, googleEventId})을 구글 캘린더에 새로 만들거나
+  // 갱신해요. 구글 종일 일정은 end.date가 "시작일 다음날"이어야 하루짜리로 표시돼요.
+  async function upsertCalendarEvent(evt) {
+    const calId = await ensureGroupwareCalendar();
+    const body = {
+      summary: evt.title || "(제목없음)",
+      description: evt.memo || "",
+      start: { date: evt.date },
+      end: { date: addOneDay(evt.endDate || evt.date) },
+    };
+    if (evt.googleEventId) {
+      try {
+        const updated = await calFetch(`/calendars/${encodeURIComponent(calId)}/events/${evt.googleEventId}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        });
+        return updated.id;
+      } catch (e) {
+        if (e.status !== 404 && e.status !== 410) throw e; // 구글쪽에서 이미 지워졌으면 새로 만들어요
+      }
+    }
+    const created = await calFetch(`/calendars/${encodeURIComponent(calId)}/events`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return created.id;
+  }
+
+  async function deleteCalendarEvent(googleEventId) {
+    if (!googleEventId) return;
+    const calId = await ensureGroupwareCalendar();
+    try {
+      await calFetch(`/calendars/${encodeURIComponent(calId)}/events/${googleEventId}`, { method: "DELETE" });
+    } catch (e) {
+      if (e.status !== 404 && e.status !== 410) throw e;
+    }
+  }
+
   return {
     loadGapiClient,
     initTokenClient,
@@ -293,6 +401,10 @@ const Drive = (() => {
     writeCollection,
     uploadDocument,
     downloadFileAsBase64,
+    isCalendarLinked,
+    linkGoogleCalendar,
+    upsertCalendarEvent,
+    deleteCalendarEvent,
     get user() {
       return currentUser;
     },
