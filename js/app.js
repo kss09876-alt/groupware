@@ -385,6 +385,22 @@ async function ensurePdfLibs() {
   }
 }
 
+function uint8ToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 async function toPdfBytes(file) {
   const { PDFDocument } = PDFLib;
   const arrayBuf = await file.arrayBuffer();
@@ -466,6 +482,68 @@ async function setupSealPlacer(pdfBytes, fileName, seals) {
     marker.style.top = ev.clientY - wrapRect.top - markerSize / 2 + "px";
     marker.style.display = sealPlaceState.sealDataUrl ? "block" : "none";
     $("#confirmSealBtn").disabled = !sealPlaceState.sealDataUrl;
+  });
+}
+
+// 전자계약: 계약서(PDF)를 올리고 "서명/도장이 들어갈 위치"를 미리 클릭해서 지정해요.
+// 인감 날인과 같은 pdf.js 렌더링 방식을 쓰되, 아직 등록된 이미지가 없으니(외부인이
+// 나중에 서명하니까) 마커는 이미지가 아니라 위치를 표시하는 네모 박스예요.
+let contractPlaceState = null;
+async function setupContractPlacer(pdfBytes, fileName) {
+  const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+  const pageCount = pdf.numPages;
+
+  const pageSelect = $("#f_contractPageNum");
+  pageSelect.innerHTML = Array.from(
+    { length: pageCount },
+    (_, i) => `<option value="${i + 1}">${i + 1} 페이지${i === pageCount - 1 ? " (마지막)" : ""}</option>`
+  ).join("");
+  pageSelect.value = String(pageCount);
+
+  contractPlaceState = { pdfBytes, fileName, pageIndex: pageCount - 1, x: null, y: null, viewport: null };
+
+  async function renderPage(pageNum) {
+    const page = await pdf.getPage(pageNum);
+    const wrap = $("#contractPlaceCanvasWrap");
+    const containerWidth = wrap.clientWidth || 420;
+    const baseViewport = page.getViewport({ scale: 1 });
+    const scale = Math.min(containerWidth / baseViewport.width, 1.4);
+    const viewport = page.getViewport({ scale });
+    const canvas = $("#contractPlaceCanvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+
+    contractPlaceState.pageIndex = pageNum - 1;
+    contractPlaceState.viewport = viewport;
+    contractPlaceState.x = null;
+    contractPlaceState.y = null;
+    $("#contractPlaceMarker").style.display = "none";
+    $("#confirmContractPlaceBtn").disabled = true;
+  }
+  await renderPage(pageCount);
+  pageSelect.addEventListener("change", () => renderPage(Number(pageSelect.value)));
+
+  $("#contractPlaceCanvas").addEventListener("click", (ev) => {
+    const canvas = $("#contractPlaceCanvas");
+    const wrap = $("#contractPlaceCanvasWrap");
+    const canvasRect = canvas.getBoundingClientRect();
+    const wrapRect = wrap.getBoundingClientRect();
+
+    const bufX = ((ev.clientX - canvasRect.left) / canvasRect.width) * canvas.width;
+    const bufY = ((ev.clientY - canvasRect.top) / canvasRect.height) * canvas.height;
+    contractPlaceState.x = bufX;
+    contractPlaceState.y = bufY;
+
+    const marker = $("#contractPlaceMarker");
+    const markerW = 96;
+    const markerH = 48;
+    marker.style.width = markerW + "px";
+    marker.style.height = markerH + "px";
+    marker.style.left = ev.clientX - wrapRect.left - markerW / 2 + "px";
+    marker.style.top = ev.clientY - wrapRect.top - markerH / 2 + "px";
+    marker.style.display = "flex";
+    $("#confirmContractPlaceBtn").disabled = false;
   });
 }
 
@@ -945,7 +1023,47 @@ function bindTabEvents(tab) {
   if (tab === "contract") {
     $("#newContractBtn")?.addEventListener("click", () => {
       openModal(Modules.contractForm());
-      $("#createContractBtn")?.addEventListener("click", createContractLink);
+      $("#c_file")?.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const title = $("#c_title")?.value.trim() || "";
+        const signerName = $("#c_signerName")?.value.trim() || "";
+        if (!title) {
+          alert("제목을 먼저 입력해주세요.");
+          e.target.value = "";
+          return;
+        }
+        if (!/^(application\/pdf|image\/png|image\/jpeg)$/.test(file.type)) {
+          alert("PDF 또는 이미지(jpg/png) 파일만 올릴 수 있어요. 워드 파일은 먼저 PDF로 저장해서 올려주세요.");
+          e.target.value = "";
+          return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          alert("파일이 너무 커요. 10MB 이하로 올려주세요.");
+          e.target.value = "";
+          return;
+        }
+        const statusEl = $("#contractCreateStatus");
+        if (statusEl) statusEl.textContent = "서류 불러오는 중...";
+        try {
+          await ensurePdfLibs();
+          const pdfBytes = await toPdfBytes(file);
+          openModal(Modules.contractPlaceForm(file.name));
+          await setupContractPlacer(pdfBytes, file.name);
+          $("#confirmContractPlaceBtn").addEventListener("click", async () => {
+            const state = contractPlaceState;
+            if (state.x == null) {
+              alert("서명(도장) 위치를 미리보기에서 클릭해주세요.");
+              return;
+            }
+            closeModal();
+            await createContractLink({ title, signerName, state });
+          });
+        } catch (err) {
+          console.error(err);
+          alert("서류를 불러오지 못했어요: " + (err && err.message ? err.message : "알 수 없는 오류"));
+        }
+      });
     });
     $$("[data-contract-check]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); checkContractStatus(b.dataset.contractCheck); }));
     $$("[data-contract-copy]").forEach((b) =>
@@ -3308,27 +3426,32 @@ async function attachAiMediaToSnsItem(id, imageDataUrl, videoBlob) {
 // KV(임시 저장소)를 통해 만들어요. 여기(app.js)에서는 "계약서 만들기 → 링크 생성 →
 // contracts.json에 기록 → 나중에 상태 확인" 흐름만 담당해요. 실제 서명 화면은
 // initContractSignScreen()이 별도로 그려요 (구글 로그인 화면과 완전히 분리돼 있어요).
-async function createContractLink() {
-  const btn = $("#createContractBtn");
-  const statusEl = $("#contractCreateStatus");
-  const title = $("#c_title")?.value.trim() || "";
-  const content = $("#c_content")?.value.trim() || "";
-  const signerName = $("#c_signerName")?.value.trim() || "";
-  if (!title || !content) {
-    alert("제목과 계약 내용을 입력해주세요.");
-    return;
-  }
+// title/signerName은 1단계 모달에서, state({pdfBytes, pageIndex, x, y, viewport})는
+// 2단계(위치 지정) 모달에서 넘어와요. PDF 원본과 서명 위치(페이지+PDF 좌표)를 Worker에
+// 보내서 KV에 저장하고, 링크를 만들어요.
+async function createContractLink({ title, signerName, state }) {
   if (!CONFIG.AI_WORKER_URL) {
     alert("AI Worker 주소가 설정되어 있지 않아요.");
     return;
   }
-  if (btn) btn.disabled = true;
-  if (statusEl) statusEl.textContent = "링크 만드는 중...";
+  const scale = state.viewport.scale;
+  const pageHeightPts = state.viewport.height / scale;
+  const stampX = state.x / scale;
+  const stampY = pageHeightPts - state.y / scale;
   try {
+    const pdfBase64 = uint8ToBase64(state.pdfBytes);
     const res = await fetch(CONFIG.AI_WORKER_URL + "/contract-create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, content, signerName, creatorName: ctx.user?.name || "" }),
+      body: JSON.stringify({
+        title,
+        signerName,
+        creatorName: ctx.user?.name || "",
+        pdfBase64,
+        stampPage: state.pageIndex,
+        stampX,
+        stampY,
+      }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || data.error) {
@@ -3345,14 +3468,15 @@ async function createContractLink() {
       status: "대기",
       signedByName: "",
       signedAt: null,
+      signedFileId: null,
+      signedFileLink: null,
       createdAt: nowStr(),
     });
     await saveModule("contracts", store);
-    closeModal();
     refreshCurrentTab();
     openModal(`
       <h3>서명 링크가 만들어졌어요</h3>
-      <p class="hint">이 링크를 카카오톡이나 메일로 상대방에게 직접 보내주세요. 로그인 없이 바로 계약 내용을 보고 서명할 수 있어요.</p>
+      <p class="hint">이 링크를 카카오톡이나 메일로 상대방에게 직접 보내주세요. 로그인 없이 바로 계약서를 보고, 지정한 위치에 서명(도장)을 남길 수 있어요.</p>
       <div class="form-grid"><label>서명 링크 <input id="contractLinkOutput" value="${esc(link)}" readonly></label></div>
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>닫기</button>
@@ -3368,12 +3492,13 @@ async function createContractLink() {
       }
     });
   } catch (e) {
-    if (statusEl) statusEl.textContent = "";
-    if (btn) btn.disabled = false;
     alert("링크 생성에 실패했어요: " + e.message);
   }
 }
 
+// 서명 완료 여부를 확인해요. 서명이 완료됐으면 KV에 있던 "서명이 합성된 최종 PDF"를
+// 받아서 회사 드라이브에 실제 파일로 저장해요 (contracts.json엔 용량이 큰 PDF를
+// 통째로 넣지 않고, 드라이브 파일 링크만 남겨요).
 async function checkContractStatus(id) {
   const store = await loadModule("contracts");
   const item = store.items.find((c) => c.id === id);
@@ -3398,7 +3523,13 @@ async function checkContractStatus(id) {
       item2.status = data.status;
       item2.signedByName = data.signedByName || "";
       item2.signedAt = data.signedAt || null;
-      item2.signatureDataUrl = data.signatureDataUrl || null;
+      if (data.status === "서명완료" && data.signedPdfBase64 && !item2.signedFileId) {
+        const bytes = base64ToUint8(data.signedPdfBase64);
+        const file = new File([bytes], `계약서_서명완료_${item2.title}.pdf`, { type: "application/pdf" });
+        const uploaded = await Drive.uploadDocument(dataFolderId, file);
+        item2.signedFileId = uploaded.id;
+        item2.signedFileLink = uploaded.webViewLink || "";
+      }
       await saveModule("contracts", store2);
     }
     refreshCurrentTab();
@@ -3408,37 +3539,35 @@ async function checkContractStatus(id) {
   }
 }
 
-// 서명이 완료된 계약서를, 서명 이미지가 붙은 간단한 HTML 문서로 만들어서 회사 드라이브에
-// 보관하고 다운로드도 할 수 있게 해요. (법적 효력을 보장하는 정식 전자서명은 아니고,
-// 사내 기록·보관 목적의 간이 계약서예요.)
 async function downloadSignedContract(id) {
   const store = await loadModule("contracts");
   const item = store.items.find((c) => c.id === id);
-  if (!item || item.status !== "서명완료") {
-    alert("아직 서명이 완료되지 않았어요.");
+  if (!item || item.status !== "서명완료" || !item.signedFileId) {
+    alert("아직 서명이 완료되지 않았어요. 먼저 '서명 확인'을 눌러주세요.");
     return;
   }
-  const html = `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>${esc(item.title)}</title>
-  <style>body{font-family:sans-serif; max-width:700px; margin:40px auto; padding:0 20px; line-height:1.7;} pre{white-space:pre-wrap; font-family:inherit; border:1px solid #ddd; border-radius:8px; padding:16px;} .sig{margin-top:24px;} .sig img{border:1px solid #ddd; border-radius:8px; max-width:320px;}</style>
-  </head><body>
-  <h1>${esc(item.title)}</h1>
-  <pre>${esc(item.content || "")}</pre>
-  <div class="sig">
-    <p><b>서명자:</b> ${esc(item.signedByName || item.signerName || "")}</p>
-    <p><b>서명 일시:</b> ${esc(item.signedAt ? new Date(item.signedAt).toLocaleString("ko-KR") : "")}</p>
-    ${item.signatureDataUrl ? `<img src="${item.signatureDataUrl}" alt="서명">` : ""}
-  </div>
-  </body></html>`;
-  const blob = new Blob([html], { type: "text/html" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `계약서_${item.title}.html`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  try {
+    const { base64, mimeType } = await Drive.downloadFileAsBase64(item.signedFileId);
+    const bytes = base64ToUint8(base64);
+    const blob = new Blob([bytes], { type: mimeType || "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `계약서_${item.title}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert("다운로드에 실패했어요: " + e.message);
+  }
 }
 
 // ---- 상대방이 로그인 없이 보는 서명 화면 ----
+// 원본 PDF의 지정된 페이지를 보여주고, 회사가 미리 클릭해둔 위치를 점선 박스로 표시해요.
+// 서명은 별도의 서명판(캔버스)에 그리고, "서명 완료"를 누르면 pdf-lib으로 그 서명 이미지를
+// 정확히 그 위치에 합성한 뒤 최종 PDF를 만들어서 제출해요.
+let contractSignCtx = null; // { token, pdfBytes, pageIndex, viewport, stampX, stampY }
 function initContractSignScreen(token) {
   showScreen("signScreen");
   const bodyEl = $("#signBody");
@@ -3453,7 +3582,7 @@ function initContractSignScreen(token) {
     body: JSON.stringify({ token }),
   })
     .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-    .then(({ ok, data }) => {
+    .then(async ({ ok, data }) => {
       if (!ok || !data || data.error) {
         bodyEl.innerHTML = `<p class="login-status">계약서를 찾을 수 없어요. 링크가 정확한지 확인해주세요.</p>`;
         return;
@@ -3463,12 +3592,15 @@ function initContractSignScreen(token) {
         bodyEl.innerHTML = `
           <p class="login-status">이미 서명이 완료된 계약서예요.</p>
           <p><b>서명자:</b> ${esc(data.signedByName || "")} · ${esc(data.signedAt ? new Date(data.signedAt).toLocaleString("ko-KR") : "")}</p>
-          ${data.signatureDataUrl ? `<img src="${data.signatureDataUrl}" alt="서명" style="max-width:280px; border:1px solid #ddd; border-radius:8px;">` : ""}
         `;
         return;
       }
       bodyEl.innerHTML = `
-        <pre style="white-space:pre-wrap; text-align:left; border:1px solid #ddd; border-radius:8px; padding:14px; max-height:300px; overflow:auto; font-family:inherit;">${esc(data.content || "")}</pre>
+        <p class="hint" style="text-align:left;">아래 계약서에서 점선으로 표시된 위치에 서명(도장)이 들어가요. 서명판에 서명을 그린 뒤 "서명 완료"를 눌러주세요.</p>
+        <div id="signPdfWrap" style="position:relative; width:100%; margin:10px 0;">
+          <canvas id="signPdfCanvas" style="width:100%; border:1px solid #ddd; border-radius:8px;"></canvas>
+          <div id="signStampMarker" style="position:absolute; border:2px dashed #e5484d; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11px; color:#e5484d; pointer-events:none;">서명 위치</div>
+        </div>
         <div class="form-grid">
           <label>서명자 이름 <input id="signerNameInput" value="${esc(data.signerName || "")}" placeholder="본인 이름을 입력해주세요"></label>
         </div>
@@ -3480,14 +3612,48 @@ function initContractSignScreen(token) {
         <button class="btn btn-primary" id="sigSubmitBtn" style="width:100%; margin-top:8px;">서명 완료</button>
         <p id="sigStatus" class="login-status"></p>
       `;
-      wireSignatureCanvas(token);
+      try {
+        await ensurePdfLibs();
+        const pdfBytes = base64ToUint8(data.pdfBase64);
+        const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+        const page = await pdf.getPage((data.stampPage || 0) + 1);
+        const wrap = $("#signPdfWrap");
+        const containerWidth = wrap.clientWidth || 420;
+        const baseViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(containerWidth / baseViewport.width, 1.4);
+        const viewport = page.getViewport({ scale });
+        const canvas = $("#signPdfCanvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+
+        const pageHeightPts = viewport.height / scale;
+        const markerBufX = data.stampX * scale;
+        const markerBufY = (pageHeightPts - data.stampY) * scale;
+        const cssScale = canvas.getBoundingClientRect().width / canvas.width;
+        const marker = $("#signStampMarker");
+        const markerW = 96 * cssScale;
+        const markerH = 48 * cssScale;
+        marker.style.width = markerW + "px";
+        marker.style.height = markerH + "px";
+        marker.style.left = markerBufX * cssScale - markerW / 2 + "px";
+        marker.style.top = markerBufY * cssScale - markerH / 2 + "px";
+
+        contractSignCtx = { token, pdfBytes, pageIndex: data.stampPage || 0, viewport, stampX: data.stampX, stampY: data.stampY };
+        wireSignatureCanvas();
+      } catch (err) {
+        console.error(err);
+        bodyEl.innerHTML += `<p class="login-status">계약서 미리보기를 불러오지 못했어요. 그래도 아래에서 서명은 제출할 수 있어요.</p>`;
+        contractSignCtx = { token, pdfBytes: base64ToUint8(data.pdfBase64), pageIndex: data.stampPage || 0, viewport: null, stampX: data.stampX, stampY: data.stampY };
+        wireSignatureCanvas();
+      }
     })
     .catch(() => {
       bodyEl.innerHTML = `<p class="login-status">계약서를 불러오는 데 실패했어요. 잠시 후 다시 시도해주세요.</p>`;
     });
 }
 
-function wireSignatureCanvas(token) {
+function wireSignatureCanvas() {
   const canvas = $("#sigCanvas");
   if (!canvas) return;
   const dpr = window.devicePixelRatio || 1;
@@ -3549,12 +3715,32 @@ function wireSignatureCanvas(token) {
     }
     const statusEl = $("#sigStatus");
     $("#sigSubmitBtn").disabled = true;
-    if (statusEl) statusEl.textContent = "제출 중...";
+    if (statusEl) statusEl.textContent = "서명을 계약서에 합성하는 중...";
     try {
+      const sigDataUrl = canvas.toDataURL("image/png");
+      let signedPdfBase64;
+      if (contractSignCtx && contractSignCtx.pdfBytes) {
+        // pdf-lib으로 서명 이미지를 실제 지정 위치에 합성해서 "진짜 서명된 PDF"를 만들어요.
+        const { PDFDocument } = PDFLib;
+        const pdfDoc = await PDFDocument.load(contractSignCtx.pdfBytes);
+        const sigBytes = await (await fetch(sigDataUrl)).arrayBuffer();
+        const sigImg = await pdfDoc.embedPng(sigBytes);
+        const page = pdfDoc.getPages()[contractSignCtx.pageIndex];
+        const sigHeight = 70;
+        const sigWidth = sigHeight * (sigImg.width / sigImg.height);
+        page.drawImage(sigImg, {
+          x: contractSignCtx.stampX - sigWidth / 2,
+          y: contractSignCtx.stampY - sigHeight / 2,
+          width: sigWidth,
+          height: sigHeight,
+        });
+        const finalBytes = await pdfDoc.save();
+        signedPdfBase64 = uint8ToBase64(finalBytes);
+      }
       const res = await fetch(CONFIG.AI_WORKER_URL + "/contract-sign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, signedByName, signatureDataUrl: canvas.toDataURL("image/png") }),
+        body: JSON.stringify({ token: contractSignCtx.token, signedByName, signedPdfBase64 }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data || data.error) {

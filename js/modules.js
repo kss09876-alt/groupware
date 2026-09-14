@@ -656,17 +656,18 @@ const Modules = {
     `;
   },
 
-  // ---------------- 전자계약 (서명 링크 발송) ----------------
+  // ---------------- 전자계약 (PDF 업로드 + 서명 위치 지정 + 서명 링크 발송) ----------------
+  // 계약서 PDF(또는 이미지)를 올리고, 서명/도장이 들어갈 위치를 미리 클릭해서 지정해요.
   // 구글 계정이 없는 외부 상대방(거래처/프리랜서 등)에게 링크만 보내면, 로그인 없이
-  // 계약 내용을 보고 화면에 서명해서 제출할 수 있어요. 링크 발송은 카카오톡/메일로 직접
-  // 복사해서 보내는 방식이라, 이 앱 안에서 자동으로 메일을 보내진 않아요.
+  // 그 위치에 서명을 남길 수 있고, 제출하는 순간 실제 PDF에 서명이 합성돼요. 링크 발송은
+  // 카카오톡/메일로 직접 복사해서 보내는 방식이라, 이 앱 안에서 자동으로 메일을 보내진 않아요.
   async contract(ctx) {
     const data = await ctx.load("contracts");
     const items = [...data.items].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     const statusTag = (s) => `<span class="tag ${s === "서명완료" ? "tag-ok" : "tag-wait"}">${s}</span>`;
     return `
       <div class="toolbar"><button class="btn btn-primary" id="newContractBtn">+ 새 계약서 만들기</button></div>
-      <p class="hint">계약서를 만들면 서명 링크가 생겨요. 그 링크를 카카오톡이나 메일로 상대방에게 직접 보내주세요 — 상대방은 로그인 없이 내용을 보고 화면에 서명할 수 있어요. (법적 효력을 담보하는 정식 공인 전자서명은 아니고, 사내 기록·보관용 간이 전자계약이에요.)</p>
+      <p class="hint">계약서 PDF를 올리고 서명 위치를 지정하면 서명 링크가 생겨요. 그 링크를 카카오톡이나 메일로 상대방에게 직접 보내주세요 — 상대방은 로그인 없이 계약서를 보고 지정된 위치에 서명할 수 있어요. (법적 효력을 담보하는 정식 공인 전자서명은 아니고, 사내 기록·보관용 간이 전자계약이에요.)</p>
       <div class="panel">
         ${
           items.length
@@ -701,12 +702,36 @@ const Modules = {
       <div class="form-grid">
         <label>제목 <input id="c_title" placeholder="예: 프리랜서 디자인 용역 계약서"></label>
         <label>상대방 이름 <input id="c_signerName" placeholder="예: 홍길동"></label>
-        <label>계약 내용 <textarea id="c_content" rows="10" placeholder="계약 조항을 자유롭게 입력해주세요"></textarea></label>
+      </div>
+      <p class="hint" style="margin-top:-4px">10MB 이하의 PDF 파일을 올려주세요. (워드 파일은 먼저 PDF로 저장해주세요 / jpg·png는 자동으로 1장짜리 PDF로 변환돼요)</p>
+      <label class="btn btn-primary doc-upload-label">
+        파일 선택 (제목을 먼저 입력해주세요)
+        <input type="file" id="c_file" accept="application/pdf,image/png,image/jpeg" hidden>
+      </label>
+      <p class="hint" style="margin-top:8px;">파일을 고르면 다음 화면에서 서명(도장) 위치를 지정해요.</p>
+      <span id="contractCreateStatus" class="muted"></span>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+      </div>
+    `;
+  },
+
+  contractPlaceForm(fileName) {
+    return `
+      <h3>서명 위치 지정 — ${esc(fileName)}</h3>
+      <div class="form-grid" style="margin-bottom:10px;">
+        <label>페이지
+          <select id="f_contractPageNum"></select>
+        </label>
+      </div>
+      <p class="hint" style="margin-top:-4px">아래 계약서 미리보기에서 상대방이 서명(도장)을 남길 위치를 클릭하세요.</p>
+      <div class="seal-place-wrap" id="contractPlaceCanvasWrap">
+        <canvas id="contractPlaceCanvas"></canvas>
+        <div id="contractPlaceMarker" class="seal-place-marker" style="display:none; align-items:center; justify-content:center; border:2px dashed #e5484d; border-radius:6px; font-size:11px; color:#e5484d; background:rgba(229,72,77,0.08);">서명 위치</div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
-        <button class="btn btn-primary" id="createContractBtn">서명 링크 만들기</button>
-        <span id="contractCreateStatus" class="muted"></span>
+        <button class="btn btn-primary" id="confirmContractPlaceBtn" disabled>이 위치로 링크 만들기</button>
       </div>
     `;
   },
