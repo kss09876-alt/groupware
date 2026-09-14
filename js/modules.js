@@ -8,6 +8,7 @@ const FILES = {
   attendance: "attendance.json",
   sns: "sns.json",
   issues: "issues.json",
+  contracts: "contracts.json",
 };
 
 const DEFAULTS = {
@@ -72,6 +73,9 @@ const DEFAULTS = {
     news: [],
     newsError: "",
     weather: null,
+  },
+  contracts: {
+    items: [],
   },
 };
 
@@ -648,6 +652,61 @@ const Modules = {
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
         <button class="btn btn-primary" id="saveApprovalBtn">상신</button>
+      </div>
+    `;
+  },
+
+  // ---------------- 전자계약 (서명 링크 발송) ----------------
+  // 구글 계정이 없는 외부 상대방(거래처/프리랜서 등)에게 링크만 보내면, 로그인 없이
+  // 계약 내용을 보고 화면에 서명해서 제출할 수 있어요. 링크 발송은 카카오톡/메일로 직접
+  // 복사해서 보내는 방식이라, 이 앱 안에서 자동으로 메일을 보내진 않아요.
+  async contract(ctx) {
+    const data = await ctx.load("contracts");
+    const items = [...data.items].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    const statusTag = (s) => `<span class="tag ${s === "서명완료" ? "tag-ok" : "tag-wait"}">${s}</span>`;
+    return `
+      <div class="toolbar"><button class="btn btn-primary" id="newContractBtn">+ 새 계약서 만들기</button></div>
+      <p class="hint">계약서를 만들면 서명 링크가 생겨요. 그 링크를 카카오톡이나 메일로 상대방에게 직접 보내주세요 — 상대방은 로그인 없이 내용을 보고 화면에 서명할 수 있어요. (법적 효력을 담보하는 정식 공인 전자서명은 아니고, 사내 기록·보관용 간이 전자계약이에요.)</p>
+      <div class="panel">
+        ${
+          items.length
+            ? items
+                .map(
+                  (c) => `
+          <div class="list-row">
+            <div>
+              ${statusTag(c.status)}
+              <b>${esc(c.title)}</b>
+              <span class="muted">${esc(c.signerName ? "상대방: " + c.signerName : "")}</span>
+              ${c.status === "서명완료" ? `<div class="muted" style="font-size:12.5px;">서명자: ${esc(c.signedByName || "")} · ${esc(c.signedAt ? new Date(c.signedAt).toLocaleString("ko-KR") : "")}</div>` : ""}
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="btn btn-tiny btn-secondary" data-contract-copy="${esc(c.link)}">링크 복사</button>
+              ${c.status !== "서명완료" ? `<button class="btn btn-tiny btn-secondary" data-contract-check="${c.id}">서명 확인</button>` : `<button class="btn btn-tiny btn-secondary" data-contract-download="${c.id}">다운로드</button>`}
+              <button class="btn btn-tiny btn-danger" data-del-contract="${c.id}">삭제</button>
+            </div>
+          </div>
+        `
+                )
+                .join("")
+            : `<div class="empty">등록된 계약서가 없어요.</div>`
+        }
+      </div>
+    `;
+  },
+
+  contractForm() {
+    return `
+      <h3>새 계약서 만들기</h3>
+      <div class="form-grid">
+        <label>제목 <input id="c_title" placeholder="예: 프리랜서 디자인 용역 계약서"></label>
+        <label>상대방 이름 <input id="c_signerName" placeholder="예: 홍길동"></label>
+        <label>계약 내용 <textarea id="c_content" rows="10" placeholder="계약 조항을 자유롭게 입력해주세요"></textarea></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="createContractBtn">서명 링크 만들기</button>
+        <span id="contractCreateStatus" class="muted"></span>
       </div>
     `;
   },

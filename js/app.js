@@ -37,7 +37,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 function showScreen(id) {
-  ["loginScreen", "folderScreen", "app"].forEach((s) => {
+  ["loginScreen", "folderScreen", "signScreen", "app"].forEach((s) => {
     $("#" + s).style.display = s === id ? (id === "app" ? "flex" : "flex") : "none";
   });
 }
@@ -55,6 +55,14 @@ function setSyncStatus(text, busy) {
 // 방식은 동작하지 않아요 — 그래서 토큰 캐시 방식으로 구현했어요.) 캐시된 토큰이 만료되면
 // (보통 1시간 뒤) "Google 계정으로 로그인" 버튼을 한 번 눌러주셔야 해요.
 window.addEventListener("load", async () => {
+  // 전자계약 서명 링크(?sign=토큰)로 들어온 경우엔, 구글 로그인 전혀 없이 서명 화면만 보여줘요.
+  // (상대방은 이 회사 구글 계정이 없으니, Drive 초기화/로그인 절차를 아예 건너뛰어요.)
+  const signToken = new URLSearchParams(location.search).get("sign");
+  if (signToken) {
+    initContractSignScreen(signToken);
+    return;
+  }
+
   if (!CONFIG.CLIENT_ID.includes(".apps.googleusercontent.com") || CONFIG.CLIENT_ID.startsWith("YOUR_")) {
     $("#setupWarning").style.display = "block";
   }
@@ -225,6 +233,7 @@ const TAB_TITLES = {
   notice: "공지사항",
   calendar: "일정/캘린더",
   approval: "전자결재",
+  contract: "전자계약",
   attendance: "근태관리",
   sns: "SNS 운영",
   shorts: "쇼츠 스튜디오",
@@ -929,6 +938,38 @@ function bindTabEvents(tab) {
       b.addEventListener("click", async (e) => {
         e.stopPropagation();
         await decideApproval(b.dataset.reject, "반려");
+      })
+    );
+  }
+
+  if (tab === "contract") {
+    $("#newContractBtn")?.addEventListener("click", () => {
+      openModal(Modules.contractForm());
+      $("#createContractBtn")?.addEventListener("click", createContractLink);
+    });
+    $$("[data-contract-check]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); checkContractStatus(b.dataset.contractCheck); }));
+    $$("[data-contract-copy]").forEach((b) =>
+      b.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(b.dataset.contractCopy);
+          const original = b.textContent;
+          b.textContent = "복사됨!";
+          setTimeout(() => (b.textContent = original), 1500);
+        } catch (err) {
+          alert("복사에 실패했어요. 링크: " + b.dataset.contractCopy);
+        }
+      })
+    );
+    $$("[data-contract-download]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); downloadSignedContract(b.dataset.contractDownload); }));
+    $$("[data-del-contract]").forEach((b) =>
+      b.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm("이 계약서 기록을 삭제할까요? (서명 링크도 더 이상 유효하지 않게 처리하고 싶다면 별도로 안내가 필요해요)")) return;
+        const data = await loadModule("contracts");
+        data.items = data.items.filter((c) => c.id !== b.dataset.delContract);
+        await saveModule("contracts", data);
+        refreshCurrentTab();
       })
     );
   }
@@ -3259,4 +3300,271 @@ async function attachAiMediaToSnsItem(id, imageDataUrl, videoBlob) {
   } catch (e) {
     console.error("AI 콘텐츠 미디어 첨부 실패", e);
   }
+}
+
+// ---------------- 전자계약 (서명 링크 발송) ----------------
+// 구글 드라이브는 회사 쪽(로그인한 우리) OAuth로만 접근할 수 있어서, 거래처/프리랜서처럼
+// 구글 계정이 없는 외부 상대방이 볼 수 있는 서명 페이지는 별도로 Cloudflare Worker +
+// KV(임시 저장소)를 통해 만들어요. 여기(app.js)에서는 "계약서 만들기 → 링크 생성 →
+// contracts.json에 기록 → 나중에 상태 확인" 흐름만 담당해요. 실제 서명 화면은
+// initContractSignScreen()이 별도로 그려요 (구글 로그인 화면과 완전히 분리돼 있어요).
+async function createContractLink() {
+  const btn = $("#createContractBtn");
+  const statusEl = $("#contractCreateStatus");
+  const title = $("#c_title")?.value.trim() || "";
+  const content = $("#c_content")?.value.trim() || "";
+  const signerName = $("#c_signerName")?.value.trim() || "";
+  if (!title || !content) {
+    alert("제목과 계약 내용을 입력해주세요.");
+    return;
+  }
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.textContent = "링크 만드는 중...";
+  try {
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/contract-create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, content, signerName, creatorName: ctx.user?.name || "" }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.error) {
+      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    }
+    const link = `${location.origin}${location.pathname}?sign=${data.token}`;
+    const store = await loadModule("contracts");
+    store.items.push({
+      id: uid(),
+      token: data.token,
+      title,
+      signerName,
+      link,
+      status: "대기",
+      signedByName: "",
+      signedAt: null,
+      createdAt: nowStr(),
+    });
+    await saveModule("contracts", store);
+    closeModal();
+    refreshCurrentTab();
+    openModal(`
+      <h3>서명 링크가 만들어졌어요</h3>
+      <p class="hint">이 링크를 카카오톡이나 메일로 상대방에게 직접 보내주세요. 로그인 없이 바로 계약 내용을 보고 서명할 수 있어요.</p>
+      <div class="form-grid"><label>서명 링크 <input id="contractLinkOutput" value="${esc(link)}" readonly></label></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>닫기</button>
+        <button class="btn btn-primary" id="copyContractLinkBtn">링크 복사</button>
+      </div>
+    `);
+    $("#copyContractLinkBtn")?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(link);
+        $("#copyContractLinkBtn").textContent = "복사됨!";
+      } catch (e) {
+        alert("복사에 실패했어요. 직접 선택해서 복사해주세요.");
+      }
+    });
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "";
+    if (btn) btn.disabled = false;
+    alert("링크 생성에 실패했어요: " + e.message);
+  }
+}
+
+async function checkContractStatus(id) {
+  const store = await loadModule("contracts");
+  const item = store.items.find((c) => c.id === id);
+  if (!item) return;
+  if (!CONFIG.AI_WORKER_URL) {
+    alert("AI Worker 주소가 설정되어 있지 않아요.");
+    return;
+  }
+  try {
+    const res = await fetch(CONFIG.AI_WORKER_URL + "/contract-get", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: item.token }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.error) {
+      throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+    }
+    const store2 = await loadModule("contracts", true);
+    const item2 = store2.items.find((c) => c.id === id);
+    if (item2) {
+      item2.status = data.status;
+      item2.signedByName = data.signedByName || "";
+      item2.signedAt = data.signedAt || null;
+      item2.signatureDataUrl = data.signatureDataUrl || null;
+      await saveModule("contracts", store2);
+    }
+    refreshCurrentTab();
+    if (data.status !== "서명완료") alert("아직 서명 전이에요.");
+  } catch (e) {
+    alert("상태 확인에 실패했어요: " + e.message);
+  }
+}
+
+// 서명이 완료된 계약서를, 서명 이미지가 붙은 간단한 HTML 문서로 만들어서 회사 드라이브에
+// 보관하고 다운로드도 할 수 있게 해요. (법적 효력을 보장하는 정식 전자서명은 아니고,
+// 사내 기록·보관 목적의 간이 계약서예요.)
+async function downloadSignedContract(id) {
+  const store = await loadModule("contracts");
+  const item = store.items.find((c) => c.id === id);
+  if (!item || item.status !== "서명완료") {
+    alert("아직 서명이 완료되지 않았어요.");
+    return;
+  }
+  const html = `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>${esc(item.title)}</title>
+  <style>body{font-family:sans-serif; max-width:700px; margin:40px auto; padding:0 20px; line-height:1.7;} pre{white-space:pre-wrap; font-family:inherit; border:1px solid #ddd; border-radius:8px; padding:16px;} .sig{margin-top:24px;} .sig img{border:1px solid #ddd; border-radius:8px; max-width:320px;}</style>
+  </head><body>
+  <h1>${esc(item.title)}</h1>
+  <pre>${esc(item.content || "")}</pre>
+  <div class="sig">
+    <p><b>서명자:</b> ${esc(item.signedByName || item.signerName || "")}</p>
+    <p><b>서명 일시:</b> ${esc(item.signedAt ? new Date(item.signedAt).toLocaleString("ko-KR") : "")}</p>
+    ${item.signatureDataUrl ? `<img src="${item.signatureDataUrl}" alt="서명">` : ""}
+  </div>
+  </body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `계약서_${item.title}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// ---- 상대방이 로그인 없이 보는 서명 화면 ----
+function initContractSignScreen(token) {
+  showScreen("signScreen");
+  const bodyEl = $("#signBody");
+  bodyEl.innerHTML = `<p class="login-status">계약서를 불러오는 중...</p>`;
+  if (!CONFIG.AI_WORKER_URL) {
+    bodyEl.innerHTML = `<p class="login-status">이 그룹웨어의 서버 설정이 완료되지 않았어요.</p>`;
+    return;
+  }
+  fetch(CONFIG.AI_WORKER_URL + "/contract-get", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  })
+    .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || !data || data.error) {
+        bodyEl.innerHTML = `<p class="login-status">계약서를 찾을 수 없어요. 링크가 정확한지 확인해주세요.</p>`;
+        return;
+      }
+      $("#signTitle").textContent = data.title || "계약서";
+      if (data.status === "서명완료") {
+        bodyEl.innerHTML = `
+          <p class="login-status">이미 서명이 완료된 계약서예요.</p>
+          <p><b>서명자:</b> ${esc(data.signedByName || "")} · ${esc(data.signedAt ? new Date(data.signedAt).toLocaleString("ko-KR") : "")}</p>
+          ${data.signatureDataUrl ? `<img src="${data.signatureDataUrl}" alt="서명" style="max-width:280px; border:1px solid #ddd; border-radius:8px;">` : ""}
+        `;
+        return;
+      }
+      bodyEl.innerHTML = `
+        <pre style="white-space:pre-wrap; text-align:left; border:1px solid #ddd; border-radius:8px; padding:14px; max-height:300px; overflow:auto; font-family:inherit;">${esc(data.content || "")}</pre>
+        <div class="form-grid">
+          <label>서명자 이름 <input id="signerNameInput" value="${esc(data.signerName || "")}" placeholder="본인 이름을 입력해주세요"></label>
+        </div>
+        <p class="hint" style="text-align:left;">아래 네모 칸에 손가락(모바일)이나 마우스로 서명을 그려주세요.</p>
+        <canvas id="sigCanvas" width="440" height="160" style="border:1px solid #ccc; border-radius:8px; width:100%; max-width:440px; touch-action:none; background:#fff;"></canvas>
+        <div class="modal-actions" style="justify-content:center;">
+          <button class="btn btn-secondary btn-tiny" id="sigClearBtn">지우기</button>
+        </div>
+        <button class="btn btn-primary" id="sigSubmitBtn" style="width:100%; margin-top:8px;">서명 완료</button>
+        <p id="sigStatus" class="login-status"></p>
+      `;
+      wireSignatureCanvas(token);
+    })
+    .catch(() => {
+      bodyEl.innerHTML = `<p class="login-status">계약서를 불러오는 데 실패했어요. 잠시 후 다시 시도해주세요.</p>`;
+    });
+}
+
+function wireSignatureCanvas(token) {
+  const canvas = $("#sigCanvas");
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx2d = canvas.getContext("2d");
+  ctx2d.scale(dpr, dpr);
+  ctx2d.lineWidth = 2.5;
+  ctx2d.lineCap = "round";
+  ctx2d.strokeStyle = "#111";
+  let drawing = false;
+  let hasDrawn = false;
+
+  function pos(e) {
+    const r = canvas.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return { x: p.clientX - r.left, y: p.clientY - r.top };
+  }
+  function start(e) {
+    e.preventDefault();
+    drawing = true;
+    hasDrawn = true;
+    const p = pos(e);
+    ctx2d.beginPath();
+    ctx2d.moveTo(p.x, p.y);
+  }
+  function move(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = pos(e);
+    ctx2d.lineTo(p.x, p.y);
+    ctx2d.stroke();
+  }
+  function end() {
+    drawing = false;
+  }
+  canvas.addEventListener("mousedown", start);
+  canvas.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", end);
+  canvas.addEventListener("touchstart", start, { passive: false });
+  canvas.addEventListener("touchmove", move, { passive: false });
+  canvas.addEventListener("touchend", end);
+
+  $("#sigClearBtn")?.addEventListener("click", () => {
+    ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+    hasDrawn = false;
+  });
+
+  $("#sigSubmitBtn")?.addEventListener("click", async () => {
+    const signedByName = $("#signerNameInput")?.value.trim();
+    if (!signedByName) {
+      alert("이름을 입력해주세요.");
+      return;
+    }
+    if (!hasDrawn) {
+      alert("서명을 그려주세요.");
+      return;
+    }
+    const statusEl = $("#sigStatus");
+    $("#sigSubmitBtn").disabled = true;
+    if (statusEl) statusEl.textContent = "제출 중...";
+    try {
+      const res = await fetch(CONFIG.AI_WORKER_URL + "/contract-sign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, signedByName, signatureDataUrl: canvas.toDataURL("image/png") }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.error) {
+        throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+      }
+      $("#signBody").innerHTML = `<p class="login-status">서명이 완료됐어요. 감사합니다!</p>`;
+    } catch (e) {
+      if (statusEl) statusEl.textContent = "";
+      $("#sigSubmitBtn").disabled = false;
+      alert("제출에 실패했어요: " + e.message);
+    }
+  });
 }

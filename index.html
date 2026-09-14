@@ -32,6 +32,14 @@
     </div>
   </div>
 
+  <!-- 전자계약 서명 화면 (?sign=토큰 으로 접속했을 때만 표시 — 구글 로그인 없이 외부인도 볼 수 있어요) -->
+  <div id="signScreen" class="login-screen" style="display:none;">
+    <div class="login-box" style="max-width:520px;">
+      <h1 id="signTitle">계약서</h1>
+      <div id="signBody"></div>
+    </div>
+  </div>
+
   <!-- 메인 앱 -->
   <div id="app" class="app" style="display:none;">
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
@@ -47,6 +55,7 @@
         <button class="nav-item" data-tab="notice">공지사항</button>
         <button class="nav-item" data-tab="calendar">일정/캘린더</button>
         <button class="nav-item" data-tab="approval">전자결재</button>
+        <button class="nav-item" data-tab="contract">전자계약</button>
         <button class="nav-item" data-tab="attendance">근태관리</button>
         <button class="nav-item" data-tab="sns">SNS 운영</button>
         <button class="nav-item" data-tab="shorts">쇼츠 스튜디오</button>
@@ -84,7 +93,7 @@
   <script async defer src="https://apis.google.com/js/api.js"></script>
   <!-- 인감 날인(도장 찍기) 기능에 필요한 pdf-lib / pdf.js는 그 기능을 쓸 때만 불러와요 (js/app.js의 ensurePdfLibs 참고) -->
   <script src="js/drive.js?v=28"></script>
-  <script src="js/modules.js?v=39"></script>
-  <script src="js/app.js?v=39"></script>
+  <script src="js/modules.js?v=40"></script>
+  <script src="js/app.js?v=40"></script>
 </body>
 </html>
