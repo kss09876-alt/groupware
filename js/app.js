@@ -418,7 +418,7 @@ async function toPdfBytes(file) {
 // "날인하기"를 누르면 그 좌표에 정확히 도장을 찍습니다.
 let sealPlaceState = null;
 async function setupSealPlacer(pdfBytes, fileName, seals) {
-  const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(), cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/", cMapPacked: true, standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/" }).promise;
   const pageCount = pdf.numPages;
 
   const pageSelect = $("#f_sealPageNum");
@@ -490,7 +490,7 @@ async function setupSealPlacer(pdfBytes, fileName, seals) {
 // 나중에 서명하니까) 마커는 이미지가 아니라 위치를 표시하는 네모 박스예요.
 let contractPlaceState = null;
 async function setupContractPlacer(pdfBytes, fileName) {
-  const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(), cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/", cMapPacked: true, standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/" }).promise;
   const pageCount = pdf.numPages;
 
   const pageSelect = $("#f_contractPageNum");
@@ -3615,7 +3615,7 @@ function initContractSignScreen(token) {
       try {
         await ensurePdfLibs();
         const pdfBytes = base64ToUint8(data.pdfBase64);
-        const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(), cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/", cMapPacked: true, standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/" }).promise;
         const page = await pdf.getPage((data.stampPage || 0) + 1);
         const wrap = $("#signPdfWrap");
         const containerWidth = wrap.clientWidth || 420;
