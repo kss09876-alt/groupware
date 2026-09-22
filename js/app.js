@@ -500,14 +500,51 @@ async function setupContractPlacer(pdfBytes, fileName) {
   ).join("");
   pageSelect.value = String(pageCount);
 
-  contractPlaceState = { pdfBytes, fileName, pageIndex: pageCount - 1, x: null, y: null, viewport: null };
+  contractPlaceState = { pdfBytes, fileName, pageIndex: pageCount - 1, points: [], viewport: null };
+
+  function updatePlaceHint() {
+    const hint = $("#contractPlaceCount");
+    if (!hint) return;
+    const n = contractPlaceState.points.length;
+    hint.textContent = n > 0
+      ? n + "곳에 서명 위치가 지정됐어요. 표시된 위치를 다시 클릭하면 삭제돼요."
+      : "";
+  }
+
+  function redrawMarkers() {
+    const wrap = $("#contractPlaceCanvasWrap");
+    wrap.querySelectorAll('[data-dyn-marker="1"]').forEach((el) => el.remove());
+    contractPlaceState.points
+      .filter((p) => p.pageIndex === contractPlaceState.pageIndex)
+      .forEach((p) => {
+        const markerW = 96;
+        const markerH = 48;
+        const marker = document.createElement("div");
+        marker.dataset.dynMarker = "1";
+        marker.style.cssText = "position:absolute; display:flex; align-items:center; justify-content:center; border:2px dashed #e5484d; border-radius:6px; font-size:11px; color:#e5484d; background:rgba(229,72,77,0.08); cursor:pointer;";
+        marker.style.width = markerW + "px";
+        marker.style.height = markerH + "px";
+        marker.style.left = p.x - markerW / 2 + "px";
+        marker.style.top = p.y - markerH / 2 + "px";
+        marker.textContent = "서명 (삭제)";
+        marker.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const i = contractPlaceState.points.indexOf(p);
+          if (i !== -1) contractPlaceState.points.splice(i, 1);
+          redrawMarkers();
+          updatePlaceHint();
+          $("#confirmContractPlaceBtn").disabled = contractPlaceState.points.length === 0;
+        });
+        wrap.appendChild(marker);
+      });
+  }
 
   async function renderPage(pageNum) {
     const page = await pdf.getPage(pageNum);
     const wrap = $("#contractPlaceCanvasWrap");
-    const containerWidth = wrap.clientWidth || 420;
+    const containerWidth = wrap.clientWidth || 760;
     const baseViewport = page.getViewport({ scale: 1 });
-    const scale = Math.min(containerWidth / baseViewport.width, 1.4);
+    const scale = Math.min(containerWidth / baseViewport.width, 2.2);
     const viewport = page.getViewport({ scale });
     const canvas = $("#contractPlaceCanvas");
     canvas.width = viewport.width;
@@ -516,33 +553,28 @@ async function setupContractPlacer(pdfBytes, fileName) {
 
     contractPlaceState.pageIndex = pageNum - 1;
     contractPlaceState.viewport = viewport;
-    contractPlaceState.x = null;
-    contractPlaceState.y = null;
-    $("#contractPlaceMarker").style.display = "none";
-    $("#confirmContractPlaceBtn").disabled = true;
+    redrawMarkers();
+    updatePlaceHint();
+    $("#confirmContractPlaceBtn").disabled = contractPlaceState.points.length === 0;
   }
   await renderPage(pageCount);
   pageSelect.addEventListener("change", () => renderPage(Number(pageSelect.value)));
 
   $("#contractPlaceCanvas").addEventListener("click", (ev) => {
     const canvas = $("#contractPlaceCanvas");
-    const wrap = $("#contractPlaceCanvasWrap");
     const canvasRect = canvas.getBoundingClientRect();
-    const wrapRect = wrap.getBoundingClientRect();
 
     const bufX = ((ev.clientX - canvasRect.left) / canvasRect.width) * canvas.width;
     const bufY = ((ev.clientY - canvasRect.top) / canvasRect.height) * canvas.height;
-    contractPlaceState.x = bufX;
-    contractPlaceState.y = bufY;
-
-    const marker = $("#contractPlaceMarker");
-    const markerW = 96;
-    const markerH = 48;
-    marker.style.width = markerW + "px";
-    marker.style.height = markerH + "px";
-    marker.style.left = ev.clientX - wrapRect.left - markerW / 2 + "px";
-    marker.style.top = ev.clientY - wrapRect.top - markerH / 2 + "px";
-    marker.style.display = "flex";
+    contractPlaceState.points.push({
+      pageIndex: contractPlaceState.pageIndex,
+      x: bufX,
+      y: bufY,
+      scale: contractPlaceState.viewport.scale,
+      pageHeightPts: contractPlaceState.viewport.height / contractPlaceState.viewport.scale,
+    });
+    redrawMarkers();
+    updatePlaceHint();
     $("#confirmContractPlaceBtn").disabled = false;
   });
 }
@@ -1049,11 +1081,13 @@ function bindTabEvents(tab) {
           await ensurePdfLibs();
           const pdfBytes = await toPdfBytes(file);
           openModal(Modules.contractPlaceForm(file.name));
+          const _mb = document.querySelector(".modal-box");
+          if (_mb) { _mb.style.width = "820px"; _mb.style.maxWidth = "95vw"; }
           await setupContractPlacer(pdfBytes, file.name);
           $("#confirmContractPlaceBtn").addEventListener("click", async () => {
             const state = contractPlaceState;
-            if (state.x == null) {
-              alert("서명(도장) 위치를 미리보기에서 클릭해주세요.");
+            if (!state.points || state.points.length === 0) {
+              alert("서명(도장) 위치를 미리보기에서 최소 한 곳 클릭해주세요.");
               return;
             }
             closeModal();
@@ -3434,10 +3468,11 @@ async function createContractLink({ title, signerName, state }) {
     alert("AI Worker 주소가 설정되어 있지 않아요.");
     return;
   }
-  const scale = state.viewport.scale;
-  const pageHeightPts = state.viewport.height / scale;
-  const stampX = state.x / scale;
-  const stampY = pageHeightPts - state.y / scale;
+  const stamps = state.points.map((p) => ({
+    page: p.pageIndex,
+    x: p.x / p.scale,
+    y: p.pageHeightPts - p.y / p.scale,
+  }));
   try {
     const pdfBase64 = uint8ToBase64(state.pdfBytes);
     const res = await fetch(CONFIG.AI_WORKER_URL + "/contract-create", {
@@ -3448,9 +3483,7 @@ async function createContractLink({ title, signerName, state }) {
         signerName,
         creatorName: ctx.user?.name || "",
         pdfBase64,
-        stampPage: state.pageIndex,
-        stampX,
-        stampY,
+        stamps,
       }),
     });
     const data = await res.json().catch(() => null);
@@ -3616,11 +3649,13 @@ function initContractSignScreen(token) {
         await ensurePdfLibs();
         const pdfBytes = base64ToUint8(data.pdfBase64);
         const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(), cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/", cMapPacked: true, standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/" }).promise;
-        const page = await pdf.getPage((data.stampPage || 0) + 1);
+        const stamps = (data.stamps && data.stamps.length) ? data.stamps : [{ page: data.stampPage || 0, x: data.stampX, y: data.stampY }];
+        const signPageIndex = stamps[0].page || 0;
+        const page = await pdf.getPage(signPageIndex + 1);
         const wrap = $("#signPdfWrap");
-        const containerWidth = wrap.clientWidth || 420;
+        const containerWidth = wrap.clientWidth || 640;
         const baseViewport = page.getViewport({ scale: 1 });
-        const scale = Math.min(containerWidth / baseViewport.width, 1.4);
+        const scale = Math.min(containerWidth / baseViewport.width, 2.0);
         const viewport = page.getViewport({ scale });
         const canvas = $("#signPdfCanvas");
         canvas.width = viewport.width;
@@ -3628,23 +3663,33 @@ function initContractSignScreen(token) {
         await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
 
         const pageHeightPts = viewport.height / scale;
-        const markerBufX = data.stampX * scale;
-        const markerBufY = (pageHeightPts - data.stampY) * scale;
         const cssScale = canvas.getBoundingClientRect().width / canvas.width;
-        const marker = $("#signStampMarker");
-        const markerW = 96 * cssScale;
-        const markerH = 48 * cssScale;
-        marker.style.width = markerW + "px";
-        marker.style.height = markerH + "px";
-        marker.style.left = markerBufX * cssScale - markerW / 2 + "px";
-        marker.style.top = markerBufY * cssScale - markerH / 2 + "px";
+        const existingMarker = $("#signStampMarker");
+        if (existingMarker) existingMarker.style.display = "none";
+        stamps
+          .filter((s) => (s.page || 0) === signPageIndex)
+          .forEach((s) => {
+            const markerBufX = s.x * scale;
+            const markerBufY = (pageHeightPts - s.y) * scale;
+            const markerW = 96 * cssScale;
+            const markerH = 48 * cssScale;
+            const marker = document.createElement("div");
+            marker.className = "sign-stamp-marker";
+            marker.style.cssText = "position:absolute; border:2px dashed #e5484d; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11px; color:#e5484d; pointer-events:none;";
+            marker.style.width = markerW + "px";
+            marker.style.height = markerH + "px";
+            marker.style.left = markerBufX * cssScale - markerW / 2 + "px";
+            marker.style.top = markerBufY * cssScale - markerH / 2 + "px";
+            marker.textContent = "서명 위치";
+            wrap.appendChild(marker);
+          });
 
-        contractSignCtx = { token, pdfBytes, pageIndex: data.stampPage || 0, viewport, stampX: data.stampX, stampY: data.stampY };
+        contractSignCtx = { token, pdfBytes, stamps };
         wireSignatureCanvas();
       } catch (err) {
         console.error(err);
         bodyEl.innerHTML += `<p class="login-status">계약서 미리보기를 불러오지 못했어요. 그래도 아래에서 서명은 제출할 수 있어요.</p>`;
-        contractSignCtx = { token, pdfBytes: base64ToUint8(data.pdfBase64), pageIndex: data.stampPage || 0, viewport: null, stampX: data.stampX, stampY: data.stampY };
+        contractSignCtx = { token, pdfBytes: base64ToUint8(data.pdfBase64), stamps: (data.stamps && data.stamps.length) ? data.stamps : [{ page: data.stampPage || 0, x: data.stampX, y: data.stampY }] };
         wireSignatureCanvas();
       }
     })
@@ -3725,14 +3770,21 @@ function wireSignatureCanvas() {
         const pdfDoc = await PDFDocument.load(contractSignCtx.pdfBytes);
         const sigBytes = await (await fetch(sigDataUrl)).arrayBuffer();
         const sigImg = await pdfDoc.embedPng(sigBytes);
-        const page = pdfDoc.getPages()[contractSignCtx.pageIndex];
         const sigHeight = 70;
         const sigWidth = sigHeight * (sigImg.width / sigImg.height);
-        page.drawImage(sigImg, {
-          x: contractSignCtx.stampX - sigWidth / 2,
-          y: contractSignCtx.stampY - sigHeight / 2,
-          width: sigWidth,
-          height: sigHeight,
+        const stamps = contractSignCtx.stamps && contractSignCtx.stamps.length
+          ? contractSignCtx.stamps
+          : [{ page: contractSignCtx.pageIndex || 0, x: contractSignCtx.stampX, y: contractSignCtx.stampY }];
+        const pdfPages = pdfDoc.getPages();
+        stamps.forEach((s) => {
+          const pg = pdfPages[s.page || 0];
+          if (!pg) return;
+          pg.drawImage(sigImg, {
+            x: s.x - sigWidth / 2,
+            y: s.y - sigHeight / 2,
+            width: sigWidth,
+            height: sigHeight,
+          });
         });
         const finalBytes = await pdfDoc.save();
         signedPdfBase64 = uint8ToBase64(finalBytes);
