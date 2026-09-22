@@ -724,10 +724,10 @@ const Modules = {
           <select id="f_contractPageNum"></select>
         </label>
       </div>
-      <p class="hint" style="margin-top:-4px">아래 계약서 미리보기에서 상대방이 서명(도장)을 남길 위치를 클릭하세요.</p>
-      <div class="seal-place-wrap" id="contractPlaceCanvasWrap">
+      <p class="hint" style="margin-top:-4px">아래 계약서 미리보기에서 상대방이 서명(도장)을 남길 위치를 클릭하세요. 여러 곳을 클릭해서 서명 위치를 여러 개 만들 수 있어요. (이미 찍은 위치를 다시 클릭하면 삭제돼요)</p>
+      <p class="hint" id="contractPlaceCount" style="margin-top:-4px; color:#e5484d;"></p>
+      <div class="seal-place-wrap" id="contractPlaceCanvasWrap" style="position:relative; width:100%;">
         <canvas id="contractPlaceCanvas"></canvas>
-        <div id="contractPlaceMarker" class="seal-place-marker" style="display:none; align-items:center; justify-content:center; border:2px dashed #e5484d; border-radius:6px; font-size:11px; color:#e5484d; background:rgba(229,72,77,0.08);">서명 위치</div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
