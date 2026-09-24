@@ -3484,6 +3484,9 @@ async function createContractLink({ title, signerName, state }) {
         creatorName: ctx.user?.name || "",
         pdfBase64,
         stamps,
+        stampPage: stamps[0] ? stamps[0].page : 0,
+        stampX: stamps[0] ? stamps[0].x : undefined,
+        stampY: stamps[0] ? stamps[0].y : undefined,
       }),
     });
     const data = await res.json().catch(() => null);
