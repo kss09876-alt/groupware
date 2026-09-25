@@ -428,24 +428,59 @@ async function setupSealPlacer(pdfBytes, fileName, seals) {
   ).join("");
   pageSelect.value = String(pageCount);
 
-  sealPlaceState = { pdfBytes, fileName, pageIndex: pageCount - 1, x: null, y: null, viewport: null, sealType: null, sealDataUrl: null };
+  sealPlaceState = { pdfBytes, fileName, pageIndex: pageCount - 1, points: [], viewport: null, sealType: null, sealDataUrl: null };
 
   const updateMarkerSrc = () => {
     const sealType = $("#f_sealType").value;
     const seal = seals[sealType];
     sealPlaceState.sealType = sealType;
     sealPlaceState.sealDataUrl = seal && seal.imageDataUrl;
-    if (sealPlaceState.sealDataUrl) $("#sealPlaceMarker").src = sealPlaceState.sealDataUrl;
   };
   updateMarkerSrc();
   $("#f_sealType").addEventListener("change", updateMarkerSrc);
 
+  function updatePlaceHint() {
+    const hint = $("#sealPlaceCount");
+    if (!hint) return;
+    const n = sealPlaceState.points.length;
+    hint.textContent = n > 0
+      ? n + "곳에 도장이 찍혀요. 표시된 위치를 다시 클릭하면 삭제돼요."
+      : "";
+  }
+
+  function redrawMarkers() {
+    const wrap = $("#sealPlaceCanvasWrap");
+    wrap.querySelectorAll('[data-dyn-marker="1"]').forEach((el) => el.remove());
+    sealPlaceState.points
+      .filter((p) => p.pageIndex === sealPlaceState.pageIndex)
+      .forEach((p) => {
+        const markerSize = 64;
+        const marker = document.createElement("img");
+        marker.dataset.dynMarker = "1";
+        marker.src = p.sealDataUrl;
+        marker.alt = "도장 미리보기";
+        marker.style.cssText = "position:absolute; cursor:pointer; opacity:0.92;";
+        marker.style.width = markerSize + "px";
+        marker.style.left = p.x - markerSize / 2 + "px";
+        marker.style.top = p.y - markerSize / 2 + "px";
+        marker.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const i = sealPlaceState.points.indexOf(p);
+          if (i !== -1) sealPlaceState.points.splice(i, 1);
+          redrawMarkers();
+          updatePlaceHint();
+          $("#confirmSealBtn").disabled = sealPlaceState.points.length === 0;
+        });
+        wrap.appendChild(marker);
+      });
+  }
+
   async function renderPage(pageNum) {
     const page = await pdf.getPage(pageNum);
     const wrap = $("#sealPlaceCanvasWrap");
-    const containerWidth = wrap.clientWidth || 420;
+    const containerWidth = wrap.clientWidth || 760;
     const baseViewport = page.getViewport({ scale: 1 });
-    const scale = Math.min(containerWidth / baseViewport.width, 1.4);
+    const scale = Math.min(containerWidth / baseViewport.width, 2.2);
     const viewport = page.getViewport({ scale });
     const canvas = $("#sealPlaceCanvas");
     canvas.width = viewport.width;
@@ -454,34 +489,36 @@ async function setupSealPlacer(pdfBytes, fileName, seals) {
 
     sealPlaceState.pageIndex = pageNum - 1;
     sealPlaceState.viewport = viewport;
-    sealPlaceState.x = null;
-    sealPlaceState.y = null;
-    $("#sealPlaceMarker").style.display = "none";
-    $("#confirmSealBtn").disabled = true;
+    redrawMarkers();
+    updatePlaceHint();
+    $("#confirmSealBtn").disabled = sealPlaceState.points.length === 0;
   }
   await renderPage(pageCount);
   pageSelect.addEventListener("change", () => renderPage(Number(pageSelect.value)));
 
   $("#sealPlaceCanvas").addEventListener("click", (ev) => {
+    if (!sealPlaceState.sealDataUrl) {
+      alert("먼저 사용할 도장을 선택해주세요.");
+      return;
+    }
     const canvas = $("#sealPlaceCanvas");
-    const wrap = $("#sealPlaceCanvasWrap");
     const canvasRect = canvas.getBoundingClientRect();
-    const wrapRect = wrap.getBoundingClientRect();
 
     // 실제 PDF 좌표 계산용 (캔버스 버퍼 픽셀 기준)
     const bufX = ((ev.clientX - canvasRect.left) / canvasRect.width) * canvas.width;
     const bufY = ((ev.clientY - canvasRect.top) / canvasRect.height) * canvas.height;
-    sealPlaceState.x = bufX;
-    sealPlaceState.y = bufY;
-
-    // 화면 미리보기 마커 위치 (CSS 픽셀 기준)
-    const marker = $("#sealPlaceMarker");
-    const markerSize = 64;
-    marker.style.width = markerSize + "px";
-    marker.style.left = ev.clientX - wrapRect.left - markerSize / 2 + "px";
-    marker.style.top = ev.clientY - wrapRect.top - markerSize / 2 + "px";
-    marker.style.display = sealPlaceState.sealDataUrl ? "block" : "none";
-    $("#confirmSealBtn").disabled = !sealPlaceState.sealDataUrl;
+    sealPlaceState.points.push({
+      pageIndex: sealPlaceState.pageIndex,
+      x: bufX,
+      y: bufY,
+      scale: sealPlaceState.viewport.scale,
+      pageHeightPts: sealPlaceState.viewport.height / sealPlaceState.viewport.scale,
+      sealType: sealPlaceState.sealType,
+      sealDataUrl: sealPlaceState.sealDataUrl,
+    });
+    redrawMarkers();
+    updatePlaceHint();
+    $("#confirmSealBtn").disabled = false;
   });
 }
 
@@ -580,7 +617,7 @@ async function setupContractPlacer(pdfBytes, fileName) {
 }
 
 async function stampAndSaveDocumentAt(state) {
-  if (!state || state.x == null || state.y == null) {
+  if (!state || !state.points || state.points.length === 0) {
     alert("도장을 찍을 위치를 미리보기에서 클릭해주세요.");
     return;
   }
@@ -588,30 +625,40 @@ async function stampAndSaveDocumentAt(state) {
   try {
     const { PDFDocument } = PDFLib;
     const c = await loadModule("corp");
-    const seal = c.seals && c.seals[state.sealType];
-    if (!seal || !seal.imageDataUrl) throw new Error("등록된 도장이 없어요.");
 
     const pdfDoc = await PDFDocument.load(state.pdfBytes);
-    const sealBytes = await (await fetch(seal.imageDataUrl)).arrayBuffer();
-    const sealImg = seal.imageDataUrl.startsWith("data:image/png")
-      ? await pdfDoc.embedPng(sealBytes)
-      : await pdfDoc.embedJpg(sealBytes);
+    const embeddedBySealType = {};
+    const pdfPages = pdfDoc.getPages();
 
-    const page = pdfDoc.getPages()[state.pageIndex];
-    const scale = state.viewport.scale;
-    const pageHeightPts = state.viewport.height / scale;
-    const pdfX = state.x / scale;
-    const pdfY = pageHeightPts - state.y / scale;
+    for (const p of state.points) {
+      const seal = c.seals && c.seals[p.sealType];
+      if (!seal || !seal.imageDataUrl) throw new Error("등록된 도장이 없어요.");
 
-    const sealHeight = 90;
-    const sealWidth = sealHeight * (sealImg.width / sealImg.height);
-    page.drawImage(sealImg, {
-      x: pdfX - sealWidth / 2,
-      y: pdfY - sealHeight / 2,
-      width: sealWidth,
-      height: sealHeight,
-      opacity: 0.92,
-    });
+      if (!embeddedBySealType[p.sealType]) {
+        const sealBytes = await (await fetch(seal.imageDataUrl)).arrayBuffer();
+        embeddedBySealType[p.sealType] = seal.imageDataUrl.startsWith("data:image/png")
+          ? await pdfDoc.embedPng(sealBytes)
+          : await pdfDoc.embedJpg(sealBytes);
+      }
+      const sealImg = embeddedBySealType[p.sealType];
+
+      const page = pdfPages[p.pageIndex];
+      if (!page) continue;
+      const scale = p.scale;
+      const pageHeightPts = p.pageHeightPts;
+      const pdfX = p.x / scale;
+      const pdfY = pageHeightPts - p.y / scale;
+
+      const sealHeight = 90;
+      const sealWidth = sealHeight * (sealImg.width / sealImg.height);
+      page.drawImage(sealImg, {
+        x: pdfX - sealWidth / 2,
+        y: pdfY - sealHeight / 2,
+        width: sealWidth,
+        height: sealHeight,
+        opacity: 0.92,
+      });
+    }
 
     const stampedBytes = await pdfDoc.save();
     const stampedBlob = new Blob([stampedBytes], { type: "application/pdf" });
@@ -625,7 +672,7 @@ async function stampAndSaveDocumentAt(state) {
     c2.sealedDocs.unshift({
       id: uid(),
       name: stampedFile.name,
-      sealLabel: seal.label || (state.sealType === "corporate" ? "법인인감" : "사용인감"),
+      sealLabel: (c.seals[state.points[0].sealType] && c.seals[state.points[0].sealType].label) || (state.points[0].sealType === "corporate" ? "법인인감" : "사용인감"),
       fileId: uploaded.id,
       webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
       createdAt: new Date().toISOString(),
@@ -864,9 +911,15 @@ function bindTabEvents(tab) {
         const pdfBytes = await toPdfBytes(file);
         setSyncStatus("동기화됨", false);
         openModal(Modules.sealPlaceForm(file.name, c.seals));
+        const _mb = document.querySelector(".modal-box");
+        if (_mb) { _mb.style.width = "820px"; _mb.style.maxWidth = "95vw"; }
         await setupSealPlacer(pdfBytes, file.name, c.seals);
         $("#confirmSealBtn").addEventListener("click", async () => {
           const state = sealPlaceState;
+          if (!state.points || state.points.length === 0) {
+            alert("도장을 찍을 위치를 미리보기에서 최소 한 곳 클릭해주세요.");
+            return;
+          }
           closeModal();
           await stampAndSaveDocumentAt(state);
         });
