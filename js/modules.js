@@ -455,10 +455,10 @@ const Modules = {
           <select id="f_sealPageNum"></select>
         </label>
       </div>
-      <p class="hint" style="margin-top:-4px">아래 서류 미리보기에서 도장을 찍을 위치를 클릭하세요.</p>
-      <div class="seal-place-wrap" id="sealPlaceCanvasWrap">
+      <p class="hint" style="margin-top:-4px">아래 서류 미리보기에서 도장을 찍을 위치를 클릭하세요. 여러 곳을 클릭해서 도장을 여러 군데 찍을 수 있어요. (이미 찍은 위치를 다시 클릭하면 삭제돼요)</p>
+      <p class="hint" id="sealPlaceCount" style="margin-top:-4px; color:#e5484d;"></p>
+      <div class="seal-place-wrap" id="sealPlaceCanvasWrap" style="position:relative; width:100%;">
         <canvas id="sealPlaceCanvas"></canvas>
-        <img id="sealPlaceMarker" class="seal-place-marker" style="display:none" alt="도장 미리보기">
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
