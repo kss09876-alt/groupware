@@ -344,6 +344,16 @@ table.kv td { padding: 7px 0; font-size: 13.5px; }
 }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: 8px !important; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.modal-box.modal-wide { width: 900px; }
+
+/* ---------- 회계관리 : AI 일괄 등록 검토 표 ---------- */
+.ai-row-table { white-space: normal; }
+.ai-row-table th, .ai-row-table td { padding: 5px 6px; }
+.ai-row-table td.chk { text-align: center; }
+.ai-row-table input {
+  width: 100%; min-width: 78px; box-sizing: border-box; border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 6px; font-size: 12.5px; color: var(--text);
+}
 
 /* ---------- 회계관리 : 사업소득 신고내역 표 ---------- */
 .table-panel { overflow-x: auto; }
