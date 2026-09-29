@@ -4,6 +4,8 @@ let dataFolderId = localStorage.getItem("gw_folderId") || null;
 let currentTab = "dashboard";
 let corpSubTab = "info"; // 법인정보 탭 내부 하위탭: "info" | "seal"
 let snsSubTab = "content"; // SNS 탭 내부 하위탭: "content" | "trends" | "analytics"
+let accountingSubTab = "biztax"; // 회계관리 탭 내부 하위탭: "biztax"(사업소득 신고내역) — 나중에 항목이 늘어날 수 있어요
+let bizTaxMonthFilter = "all"; // 사업소득 신고내역 지급월 필터: "all" 또는 "YYYY-MM"
 const cache = {}; // 모듈별 로드된 데이터 캐시 (탭 전환 시 재사용, 저장 후 무효화)
 
 // AI 콘텐츠 생성 모달의 임시 상태 (모달 열려있는 동안만 메모리에 보관)
@@ -210,6 +212,12 @@ const ctx = {
   get snsSubTab() {
     return snsSubTab;
   },
+  get accountingSubTab() {
+    return accountingSubTab;
+  },
+  get bizTaxMonthFilter() {
+    return bizTaxMonthFilter;
+  },
   get studioDraftId() {
     return studioDraftId;
   },
@@ -235,6 +243,7 @@ const TAB_TITLES = {
   approval: "전자결재",
   contract: "전자계약",
   attendance: "근태관리",
+  accounting: "회계관리",
   sns: "SNS 운영",
   shorts: "쇼츠 스튜디오",
   postStudio: "게시물 스튜디오",
@@ -248,6 +257,9 @@ $$(".nav-item").forEach((btn) => {
       enterShortsStudio();
     } else if (btn.dataset.tab === "postStudio") {
       enterPostStudio();
+    } else if (btn.dataset.tab === "homepage") {
+      // 회사 홈페이지는 그룹웨어 안의 탭이 아니라 외부 사이트라서, 화면을 바꾸지 않고 새 탭으로 열어요.
+      window.open("https://valixlab.com/", "_blank", "noopener");
     } else {
       goTab(btn.dataset.tab);
     }
@@ -261,6 +273,7 @@ async function goTab(tab) {
   currentTab = tab;
   if (tab === "corp") corpSubTab = "info";
   if (tab === "sns") snsSubTab = "content";
+  if (tab === "accounting") { accountingSubTab = "biztax"; bizTaxMonthFilter = "all"; }
   $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("#pageTitle").textContent = TAB_TITLES[tab];
   $("#content").innerHTML = `<div class="loading">불러오는 중...</div>`;
@@ -684,6 +697,33 @@ async function stampAndSaveDocumentAt(state) {
     setSyncStatus("날인 실패", false);
     alert("도장 날인에 실패했어요: " + (err && err.message ? err.message : "알 수 없는 오류"));
   }
+}
+
+
+// ---------------- 회계관리 : 사업소득 신고내역 CSV 내보내기 ----------------
+// 세무 대리인/회계 프로그램에 그대로 전달할 수 있도록 엑셀에서 바로 열리는 CSV로 내보내요.
+function exportBizTaxCsv(items) {
+  const headers = ["연번", "지급일자", "성명", "주민등록번호", "역할/직무", "용역비(세전)", "소득세(3%)", "지방소득세(0.3%)", "세금합계(3.3%)", "실지급액", "은행명", "계좌번호", "예금주", "비고"];
+  const rows = items.map((i, idx) => [
+    idx + 1, i.payDate, i.name, i.rrn, i.role, i.amount, i.incomeTax, i.localTax, i.totalTax, i.net, i.bank, i.account, i.holder, i.memo || "",
+  ]);
+  const sum = (key) => items.reduce((s, i) => s + (Number(i[key]) || 0), 0);
+  const totalRow = ["합계", "", "", "", "", sum("amount"), sum("incomeTax"), sum("localTax"), sum("totalTax"), sum("net"), "", "", "", ""];
+  const csvEscape = (v) => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [headers, ...rows, totalRow].map((r) => r.map(csvEscape).join(","));
+  const csv = "\uFEFF" + lines.join("\r\n"); // BOM 포함 → 엑셀에서 열어도 한글이 깨지지 않아요.
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `사업소득_신고내역_${todayStr()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ---------------- 탭별 이벤트 바인딩 ----------------
@@ -1226,6 +1266,91 @@ function bindTabEvents(tab) {
     $$("[data-leave-reject]").forEach((b) =>
       b.addEventListener("click", () => decideLeave(b.dataset.leaveReject, "반려"))
     );
+  }
+
+  if (tab === "accounting") {
+    $$("[data-accounting-subtab]").forEach((b) =>
+      b.addEventListener("click", () => {
+        accountingSubTab = b.dataset.accountingSubtab;
+        refreshCurrentTab();
+      })
+    );
+
+    $("#bizTaxMonthFilter")?.addEventListener("change", (e) => {
+      bizTaxMonthFilter = e.target.value;
+      refreshCurrentTab();
+    });
+
+    const openBizTaxForm = (item) => {
+      openModal(Modules.bizTaxForm(item));
+      $("#saveBizTaxBtn").addEventListener("click", async () => {
+        const name = $("#f_name").value.trim();
+        const payDate = $("#f_payDate").value;
+        const amount = Number($("#f_amount").value) || 0;
+        if (!name || !payDate || !amount) {
+          alert("성명, 지급일자, 용역비(세전)는 꼭 입력해주세요.");
+          return;
+        }
+        const calc = calcBizTax(amount);
+        const data = await loadModule("accounting");
+        data.bizTaxItems = data.bizTaxItems || [];
+        const id = $("#saveBizTaxBtn").dataset.id;
+        const prev = id ? data.bizTaxItems.find((x) => x.id === id) : null;
+        const record = {
+          id: id || uid(),
+          payDate,
+          name,
+          rrn: $("#f_rrn").value.trim(),
+          role: $("#f_role").value.trim(),
+          amount,
+          incomeTax: calc.incomeTax,
+          localTax: calc.localTax,
+          totalTax: calc.totalTax,
+          net: calc.net,
+          bank: $("#f_bank").value.trim(),
+          account: $("#f_account").value.trim(),
+          holder: $("#f_holder").value.trim(),
+          memo: $("#f_memo").value.trim(),
+          createdAt: (prev && prev.createdAt) || nowStr(),
+        };
+        if (id) {
+          const idx = data.bizTaxItems.findIndex((x) => x.id === id);
+          if (idx >= 0) data.bizTaxItems[idx] = record;
+        } else {
+          data.bizTaxItems.push(record);
+        }
+        await saveModule("accounting", data);
+        closeModal();
+        refreshCurrentTab();
+      });
+    };
+
+    $("#newBizTaxBtn")?.addEventListener("click", () => openBizTaxForm(null));
+
+    $$("[data-edit-biztax]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const data = await loadModule("accounting");
+        const item = (data.bizTaxItems || []).find((x) => x.id === b.dataset.editBiztax);
+        if (item) openBizTaxForm(item);
+      })
+    );
+
+    $$("[data-del-biztax]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        if (!confirm("이 지급내역을 삭제할까요?")) return;
+        const data = await loadModule("accounting");
+        data.bizTaxItems = (data.bizTaxItems || []).filter((x) => x.id !== b.dataset.delBiztax);
+        await saveModule("accounting", data);
+        refreshCurrentTab();
+      })
+    );
+
+    $("#exportBizTaxBtn")?.addEventListener("click", async () => {
+      const data = await loadModule("accounting");
+      const items = [...(data.bizTaxItems || [])].sort((a, b) => a.payDate.localeCompare(b.payDate));
+      const shown = bizTaxMonthFilter === "all" ? items : items.filter((i) => i.payDate.slice(0, 7) === bizTaxMonthFilter);
+      exportBizTaxCsv(shown);
+    });
   }
 
   if (tab === "sns") {

@@ -8,6 +8,7 @@ const FILES = {
   attendance: "attendance.json",
   sns: "sns.json",
   issues: "issues.json",
+  accounting: "accounting.json",
   contracts: "contracts.json",
 };
 
@@ -74,6 +75,9 @@ const DEFAULTS = {
     newsError: "",
     weather: null,
   },
+  accounting: {
+    bizTaxItems: [],
+  },
   contracts: {
     items: [],
   },
@@ -121,11 +125,30 @@ function uid() {
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
+function monthStr() {
+  return todayStr().slice(0, 7);
+}
 function nowStr() {
   return new Date().toLocaleString("ko-KR");
 }
 function esc(s) {
   return (s ?? "").toString().replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+// 사업소득(프리랜서) 원천징수 3.3% = 소득세 3% + 지방소득세(소득세의 10%) 계산. 10원 미만은 절사해요.
+function calcBizTax(amount) {
+  const amt = Number(amount) || 0;
+  const incomeTax = Math.floor((amt * 0.03) / 10) * 10;
+  const localTax = Math.floor((incomeTax * 0.1) / 10) * 10;
+  const totalTax = incomeTax + localTax;
+  const net = amt - totalTax;
+  return { incomeTax, localTax, totalTax, net };
+}
+// 주민등록번호는 목록 화면에서 앞 6자리 + 성별 구분 숫자 1자리만 보여주고 나머지는 가려요.
+function maskRrn(rrn) {
+  const s = String(rrn || "").replace(/\s/g, "");
+  const m = s.match(/^(\d{6})-?(\d)\d{6}$/);
+  if (!m) return esc(s);
+  return `${m[1]}-${m[2]}●●●●●●`;
 }
 
 const Modules = {
@@ -789,6 +812,119 @@ const Modules = {
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
         <button class="btn btn-primary" id="saveLeaveBtn">신청</button>
+      </div>
+    `;
+  },
+
+  // ---------------- 회계관리 : 사업소득 신고내역 ----------------
+  async accounting(ctx) {
+    const data = await ctx.load("accounting");
+    const sub = ctx.accountingSubTab || "biztax";
+    const nav = `
+      <div class="subtab-nav">
+        <button class="subtab-btn ${sub === "biztax" ? "active" : ""}" data-accounting-subtab="biztax">사업소득 신고내역</button>
+      </div>`;
+    const body = Modules.bizTaxBody(data, ctx.bizTaxMonthFilter || "all");
+    return nav + body;
+  },
+
+  bizTaxBody(data, monthFilter) {
+    const items = [...(data.bizTaxItems || [])].sort((a, b) => b.payDate.localeCompare(a.payDate) || String(b.createdAt).localeCompare(String(a.createdAt)));
+    const months = [...new Set(items.map((i) => i.payDate.slice(0, 7)))].sort().reverse();
+    const filterVal = monthFilter || "all";
+    const shown = filterVal === "all" ? items : items.filter((i) => i.payDate.slice(0, 7) === filterVal);
+    const sum = (key) => shown.reduce((s, i) => s + (Number(i[key]) || 0), 0);
+    const totalAmount = sum("amount");
+    const totalIncomeTax = sum("incomeTax");
+    const totalLocalTax = sum("localTax");
+    const totalTax = sum("totalTax");
+    const totalNet = sum("net");
+    const won = (n) => (Number(n) || 0).toLocaleString("ko-KR") + "원";
+
+    return `
+      <div class="panel" style="margin-bottom:16px;">
+        <p class="hint" style="margin:0;">출연진·스태프 등 프리랜서에게 지급하는 용역비의 원천징수(사업소득 3.3% = 소득세 3% + 지방소득세 0.3%)를 자동 계산해서 정리해요. 지급일이 속한 달의 다음 달 10일까지 원천징수이행상황신고서를, 다음 달 말일까지 사업소득 간이지급명세서를 제출해야 해요. (10원 미만은 절사)</p>
+      </div>
+      <div class="toolbar" style="justify-content:space-between;">
+        <label class="filter-inline">
+          지급월
+          <select id="bizTaxMonthFilter">
+            <option value="all" ${filterVal === "all" ? "selected" : ""}>전체</option>
+            ${months.map((m) => `<option value="${m}" ${filterVal === m ? "selected" : ""}>${m}</option>`).join("")}
+          </select>
+        </label>
+        <span>
+          <button class="btn btn-secondary" id="exportBizTaxBtn" ${shown.length ? "" : "disabled"}>CSV로 내보내기</button>
+          <button class="btn btn-primary" id="newBizTaxBtn">+ 지급내역 추가</button>
+        </span>
+      </div>
+      <div class="grid grid-4">
+        <div class="stat-card"><div class="stat-label">인원</div><div class="stat-value">${shown.length}명</div></div>
+        <div class="stat-card"><div class="stat-label">총 용역비 (세전)</div><div class="stat-value">${won(totalAmount)}</div></div>
+        <div class="stat-card"><div class="stat-label">총 원천징수세액</div><div class="stat-value">${won(totalTax)}</div></div>
+        <div class="stat-card"><div class="stat-label">총 실지급액</div><div class="stat-value">${won(totalNet)}</div></div>
+      </div>
+      <div class="panel table-panel">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>지급일자</th><th>성명</th><th>역할/직무</th><th>주민등록번호</th>
+              <th>용역비(세전)</th><th>세금(3.3%)</th><th>실지급액</th><th>계좌</th><th>비고</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${shown.length ? shown.map((i) => `
+              <tr>
+                <td>${esc(i.payDate)}</td>
+                <td>${esc(i.name)}</td>
+                <td>${esc(i.role)}</td>
+                <td>${maskRrn(i.rrn)}</td>
+                <td class="num">${won(i.amount)}</td>
+                <td class="num">${won(i.totalTax)}<div class="tax-breakdown">소득세 ${won(i.incomeTax)} · 지방소득세 ${won(i.localTax)}</div></td>
+                <td class="num">${won(i.net)}</td>
+                <td>${esc(i.bank)} ${esc(i.account)}<div class="tax-breakdown">${esc(i.holder)}</div></td>
+                <td>${esc(i.memo || "")}</td>
+                <td>
+                  <button class="btn btn-tiny btn-secondary" data-edit-biztax="${i.id}">수정</button>
+                  <button class="btn btn-tiny btn-danger" data-del-biztax="${i.id}">삭제</button>
+                </td>
+              </tr>
+            `).join("") : `<tr><td colspan="10" class="empty">등록된 지급내역이 없어요.</td></tr>`}
+          </tbody>
+          ${shown.length ? `
+          <tfoot>
+            <tr>
+              <td colspan="4">합계 (${shown.length}명)</td>
+              <td class="num">${won(totalAmount)}</td>
+              <td class="num">${won(totalTax)}<div class="tax-breakdown">소득세 ${won(totalIncomeTax)} · 지방소득세 ${won(totalLocalTax)}</div></td>
+              <td class="num">${won(totalNet)}</td>
+              <td colspan="3"></td>
+            </tr>
+          </tfoot>` : ""}
+        </table>
+      </div>
+    `;
+  },
+
+  bizTaxForm(item) {
+    const it = item || { payDate: todayStr(), name: "", rrn: "", role: "", amount: "", bank: "", account: "", holder: "", memo: "" };
+    return `
+      <h3>${item ? "지급내역 수정" : "지급내역 추가"}</h3>
+      <div class="form-grid">
+        <label>지급일자 <input type="date" id="f_payDate" value="${esc(it.payDate)}"></label>
+        <label>성명 <input id="f_name" value="${esc(it.name)}"></label>
+        <label>역할/직무 <input id="f_role" placeholder="예: 쇼호스트, 댄서, MD" value="${esc(it.role)}"></label>
+        <label>주민등록번호 <input id="f_rrn" placeholder="000000-0000000" value="${esc(it.rrn)}"></label>
+        <label>용역비 (세전, 원) <input type="number" id="f_amount" min="0" step="1000" value="${esc(it.amount)}"></label>
+        <label>은행명 <input id="f_bank" value="${esc(it.bank)}"></label>
+        <label>계좌번호 <input id="f_account" value="${esc(it.account)}"></label>
+        <label>예금주 <input id="f_holder" value="${esc(it.holder)}"></label>
+        <label>비고 <input id="f_memo" value="${esc(it.memo || "")}"></label>
+      </div>
+      <p class="hint" style="margin-top:4px;">세금(원천징수 3.3%)과 실지급액은 저장할 때 자동으로 계산돼요.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="saveBizTaxBtn" data-id="${item ? esc(item.id) : ""}">${item ? "수정 완료" : "추가"}</button>
       </div>
     `;
   },
