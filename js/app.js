@@ -304,8 +304,9 @@ async function refreshCurrentTab() {
 }
 
 // ---------------- 모달 ----------------
-function openModal(html) {
+function openModal(html, opts) {
   $("#modalBox").innerHTML = html;
+  $("#modalBox").classList.toggle("modal-wide", !!(opts && opts.wide));
   $("#modalBackdrop").style.display = "flex";
   $$("[data-close]", $("#modalBox")).forEach((b) => b.addEventListener("click", closeModal));
 }
@@ -396,6 +397,12 @@ async function ensurePdfLibs() {
   if (window.pdfjsLib && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_SRC;
   }
+}
+
+// 회계관리 : 진짜 .xlsx 파일로 내보내기 위한 SheetJS도 같은 방식으로 지연 로딩합니다.
+const XLSX_SRC = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+async function ensureXlsxLib() {
+  await loadScriptOnce(XLSX_SRC);
 }
 
 function uint8ToBase64(bytes) {
@@ -724,6 +731,68 @@ function exportBizTaxCsv(items) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+const BIZTAX_HEADERS = ["연번", "지급일자", "성명", "주민등록번호", "역할/직무", "용역비(세전)", "소득세(3%)", "지방소득세(0.3%)", "세금합계(3.3%)", "실지급액", "은행명", "계좌번호", "예금주", "비고"];
+function bizTaxAoa(items) {
+  const rows = items.map((i, idx) => [
+    idx + 1, i.payDate, i.name, i.rrn, i.role, i.amount, i.incomeTax, i.localTax, i.totalTax, i.net, i.bank, i.account, i.holder, i.memo || "",
+  ]);
+  const sum = (key) => items.reduce((s, i) => s + (Number(i[key]) || 0), 0);
+  const totalRow = ["합계", "", "", "", "", sum("amount"), sum("incomeTax"), sum("localTax"), sum("totalTax"), sum("net"), "", "", "", ""];
+  return [BIZTAX_HEADERS, ...rows, totalRow];
+}
+
+// ---------------- 회계관리 : 사업소득 신고내역 진짜 엑셀(.xlsx) 내보내기 ----------------
+// CSV는 세무 프로그램에 붙여넣기용으로 남겨두고, 엑셀 그대로 열어서 인쇄/전달하기 편하도록
+// 진짜 .xlsx 파일도 만들어줍니다. SheetJS(xlsx 라이브러리)는 처음엔 안 불러오고, 이 버튼을
+// 눌렀을 때만 불러와요(lazy load, pdf-lib와 같은 방식).
+async function exportBizTaxXlsx(items) {
+  await ensureXlsxLib();
+  const aoa = bizTaxAoa(items);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [
+    { wch: 5 }, { wch: 11 }, { wch: 8 }, { wch: 15 }, { wch: 13 },
+    { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+    { wch: 9 }, { wch: 16 }, { wch: 9 }, { wch: 14 },
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "사업소득신고내역");
+  XLSX.writeFile(wb, `사업소득_신고내역_${todayStr()}.xlsx`);
+}
+
+// ---------------- 회계관리 : AI로 지급내역 일괄 등록 ----------------
+// 기존에 쓰던 지급내역 엑셀/사진(출연진 명단 등)을 올리면, 법인정보 탭의 AI 서류 분석과
+// 같은 방식으로 Cloudflare Worker(→ Gemini)에 보내서 행 단위 데이터를 읽어오게 해요.
+// 여기서도 AI가 읽은 내용을 그대로 저장하지 않고, 화면에서 사람이 확인/수정한 뒤
+// "선택한 항목 등록하기"를 눌러야만 실제로 저장됩니다.
+async function aiExtractBizTaxRows(file) {
+  const dataUrl = await fileToDataUrl(file);
+  const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl) || [];
+  const mimeType = m[1] || file.type || "application/octet-stream";
+  const dataBase64 = m[2] || "";
+  const res = await fetch(CONFIG.AI_WORKER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ docKey: "bizTaxSheet", mimeType, dataBase64 }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || data.error) {
+    throw new Error((data && (data.detail || data.error)) || "서버 오류 (" + res.status + ")");
+  }
+  const fields = data.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items : Array.isArray(fields) ? fields : [];
+  return items.map((it) => ({
+    payDate: it.payDate || it.date || todayStr(),
+    name: it.name || "",
+    rrn: it.rrn || it.regNo || "",
+    role: it.role || it.position || "",
+    amount: Number(it.amount) || 0,
+    bank: it.bank || "",
+    account: it.account || it.accountNo || "",
+    holder: it.holder || it.name || "",
+    memo: it.memo || "",
+  }));
 }
 
 // ---------------- 탭별 이벤트 바인딩 ----------------
@@ -1345,11 +1414,109 @@ function bindTabEvents(tab) {
       })
     );
 
-    $("#exportBizTaxBtn")?.addEventListener("click", async () => {
+    const getShownBizTaxItems = async () => {
       const data = await loadModule("accounting");
       const items = [...(data.bizTaxItems || [])].sort((a, b) => a.payDate.localeCompare(b.payDate));
-      const shown = bizTaxMonthFilter === "all" ? items : items.filter((i) => i.payDate.slice(0, 7) === bizTaxMonthFilter);
-      exportBizTaxCsv(shown);
+      return bizTaxMonthFilter === "all" ? items : items.filter((i) => i.payDate.slice(0, 7) === bizTaxMonthFilter);
+    };
+
+    $("#exportBizTaxBtn")?.addEventListener("click", async () => {
+      exportBizTaxCsv(await getShownBizTaxItems());
+    });
+
+    $("#exportBizTaxXlsxBtn")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const original = btn.textContent;
+      btn.textContent = "엑셀 생성 중...";
+      btn.disabled = true;
+      try {
+        await exportBizTaxXlsx(await getShownBizTaxItems());
+      } catch (err) {
+        console.error(err);
+        alert("엑셀 파일을 만드는 중 오류가 발생했어요.");
+      } finally {
+        btn.textContent = original;
+        btn.disabled = false;
+      }
+    });
+
+    $("#aiBizTaxBtn")?.addEventListener("click", () => {
+      if (!CONFIG.AI_WORKER_URL) {
+        alert("아직 AI 자동 채우기가 설정되지 않았어요. README.md의 'AI 자동 채우기 설정' 안내를 따라 설정해주세요.");
+        return;
+      }
+      openModal(Modules.bizTaxAiForm());
+      $("#bizTaxAiFile")?.addEventListener("change", () => {
+        const f = $("#bizTaxAiFile").files[0];
+        $("#bizTaxAiFileName").textContent = f ? f.name : "";
+        $("#bizTaxAiAnalyzeBtn").disabled = !f;
+      });
+      $("#bizTaxAiAnalyzeBtn")?.addEventListener("click", async () => {
+        const file = $("#bizTaxAiFile").files[0];
+        if (!file) return;
+        const btn = $("#bizTaxAiAnalyzeBtn");
+        const original = btn.textContent;
+        btn.textContent = "분석 중...";
+        btn.disabled = true;
+        try {
+          const rows = await aiExtractBizTaxRows(file);
+          if (!rows.length) {
+            alert("파일에서 지급내역을 찾지 못했어요. 다른 파일로 시도해보거나 직접 입력해주세요.");
+            return;
+          }
+          openModal(Modules.bizTaxAiReviewForm(rows), { wide: true });
+          $("#bizTaxAiApplyBtn")?.addEventListener("click", async () => {
+            const rowEls = $$("[data-ai-row]");
+            const toSave = [];
+            rowEls.forEach((rowEl) => {
+              const idx = rowEl.dataset.aiRow;
+              if (!$(`#ai_use_${idx}`)?.checked) return;
+              const name = $(`#ai_name_${idx}`)?.value.trim();
+              const payDate = $(`#ai_payDate_${idx}`)?.value;
+              const amount = Number($(`#ai_amount_${idx}`)?.value) || 0;
+              if (!name || !payDate || !amount) return;
+              toSave.push({
+                payDate,
+                name,
+                rrn: $(`#ai_rrn_${idx}`)?.value.trim() || "",
+                role: $(`#ai_role_${idx}`)?.value.trim() || "",
+                amount,
+                bank: $(`#ai_bank_${idx}`)?.value.trim() || "",
+                account: $(`#ai_account_${idx}`)?.value.trim() || "",
+                holder: $(`#ai_holder_${idx}`)?.value.trim() || "",
+                memo: "",
+              });
+            });
+            if (!toSave.length) {
+              alert("등록할 항목을 선택하고, 성명·지급일자·용역비를 확인해주세요.");
+              return;
+            }
+            const data = await loadModule("accounting");
+            data.bizTaxItems = data.bizTaxItems || [];
+            toSave.forEach((row) => {
+              const calc = calcBizTax(row.amount);
+              data.bizTaxItems.push({
+                id: uid(),
+                ...row,
+                incomeTax: calc.incomeTax,
+                localTax: calc.localTax,
+                totalTax: calc.totalTax,
+                net: calc.net,
+                createdAt: nowStr(),
+              });
+            });
+            await saveModule("accounting", data);
+            closeModal();
+            refreshCurrentTab();
+          });
+        } catch (err) {
+          console.error(err);
+          alert("AI 분석에 실패했어요: " + (err && err.message ? err.message : "알 수 없는 오류"));
+        } finally {
+          btn.textContent = original;
+          btn.disabled = false;
+        }
+      });
     });
   }
 

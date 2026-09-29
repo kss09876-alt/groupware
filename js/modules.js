@@ -855,6 +855,8 @@ const Modules = {
         </label>
         <span>
           <button class="btn btn-secondary" id="exportBizTaxBtn" ${shown.length ? "" : "disabled"}>CSV로 내보내기</button>
+          <button class="btn btn-secondary" id="exportBizTaxXlsxBtn" ${shown.length ? "" : "disabled"}>엑셀로 내보내기</button>
+          <button class="btn btn-secondary" id="aiBizTaxBtn">AI로 일괄 등록</button>
           <button class="btn btn-primary" id="newBizTaxBtn">+ 지급내역 추가</button>
         </span>
       </div>
@@ -925,6 +927,66 @@ const Modules = {
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
         <button class="btn btn-primary" id="saveBizTaxBtn" data-id="${item ? esc(item.id) : ""}">${item ? "수정 완료" : "추가"}</button>
+      </div>
+    `;
+  },
+
+  // 지급내역 엑셀/이미지를 올리면 AI가 행 단위로 읽어서 아래 검토 화면에 채워줘요.
+  bizTaxAiForm() {
+    return `
+      <h3>AI로 지급내역 일괄 등록</h3>
+      <p class="hint">기존에 쓰던 지급내역 엑셀 파일이나, 출연진·스태프 명단이 담긴 이미지(사진/캡처)를 올려주세요.
+        AI가 성명·역할·지급액 등을 읽어서 표로 정리해줘요. 세금은 등록할 때 자동으로 다시 계산되니, 정확하지 않아도 괜찮아요.</p>
+      <label class="btn btn-secondary" style="display:inline-block; cursor:pointer;">
+        파일 선택
+        <input type="file" id="bizTaxAiFile" accept=".xlsx,.xls,.csv,image/*,.pdf" hidden>
+      </label>
+      <span id="bizTaxAiFileName" class="muted" style="margin-left:8px;"></span>
+      <p class="hint" style="margin-top:10px;">주민등록번호나 계좌번호는 사진에 없는 경우가 많아요 — 비어있으면 등록 전에 직접 채워주세요.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="bizTaxAiAnalyzeBtn" disabled>분석하기</button>
+      </div>
+    `;
+  },
+
+  // AI가 읽어온 행들을 사람이 확인/수정할 수 있는 표. 체크된 행만, 성명·지급일자·용역비가
+  // 채워진 경우에만 실제로 등록돼요(다른 지급내역 폼과 동일하게 세금은 등록 시 자동 계산).
+  bizTaxAiReviewForm(rows) {
+    const body = rows
+      .map(
+        (r, idx) => `
+      <tr data-ai-row="${idx}">
+        <td class="chk"><input type="checkbox" id="ai_use_${idx}" checked></td>
+        <td><input type="date" id="ai_payDate_${idx}" value="${esc(r.payDate)}"></td>
+        <td><input id="ai_name_${idx}" value="${esc(r.name)}"></td>
+        <td><input id="ai_role_${idx}" value="${esc(r.role)}"></td>
+        <td><input id="ai_rrn_${idx}" placeholder="000000-0000000" value="${esc(r.rrn)}"></td>
+        <td><input type="number" id="ai_amount_${idx}" min="0" step="1000" value="${esc(r.amount)}"></td>
+        <td><input id="ai_bank_${idx}" value="${esc(r.bank)}"></td>
+        <td><input id="ai_account_${idx}" value="${esc(r.account)}"></td>
+        <td><input id="ai_holder_${idx}" value="${esc(r.holder)}"></td>
+      </tr>`
+      )
+      .join("");
+    return `
+      <h3>AI 추출 결과 확인 (${rows.length}건)</h3>
+      <p class="hint">AI가 파일에서 읽어낸 내용이에요. 잘못 읽었거나 빠진 값은 직접 고쳐주세요. 체크된 행만 등록되고,
+        성명·지급일자·용역비가 모두 채워져 있어야 등록돼요.</p>
+      <div style="max-height:52vh; overflow:auto; border:1px solid #eee; border-radius:8px;">
+        <table class="data-table ai-row-table">
+          <thead>
+            <tr>
+              <th></th><th>지급일자</th><th>성명</th><th>역할/직무</th><th>주민등록번호</th>
+              <th>용역비(세전)</th><th>은행명</th><th>계좌번호</th><th>예금주</th>
+            </tr>
+          </thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="bizTaxAiApplyBtn">선택한 항목 등록하기</button>
       </div>
     `;
   },
