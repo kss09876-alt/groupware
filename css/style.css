@@ -344,3 +344,14 @@ table.kv td { padding: 7px 0; font-size: 13.5px; }
 }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: 8px !important; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+/* ---------- 회계관리 : 사업소득 신고내역 표 ---------- */
+.table-panel { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
+.data-table th, .data-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+.data-table thead th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+.data-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table tfoot td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
+.tax-breakdown { font-size: 11px; color: var(--muted); font-weight: 400; white-space: nowrap; }
+.filter-inline { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.filter-inline select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; color: var(--text); }
