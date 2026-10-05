@@ -586,24 +586,13 @@ const Modules = {
   async calendar(ctx) {
     const data = await ctx.load("calendar");
     const items = [...data.items].sort((a, b) => a.date.localeCompare(b.date));
-    const linked = ctx.isCalendarLinked;
+    const email = (ctx.user && ctx.user.email) || "";
+    const embedSrc = "https://calendar.google.com/calendar/embed?src=" + encodeURIComponent(email) + "&ctz=Asia%2FSeoul&mode=MONTH&hl=ko&showTitle=0&showPrint=0";
     return `
-      <div class="panel">
-        <h3>아이폰(구글) 캘린더 연동</h3>
-        ${
-          linked
-            ? `<p class="hint">연동됐어요. 이 일정들은 구글 캘린더의 "그룹웨어 일정"에 자동으로 반영돼요. 아이폰에서 설정 → 캘린더 → 계정 → 지금 로그인한 구글 계정을 추가하고 캘린더 동기화를 켜두면 자동으로 보여요.</p>
-             <div class="modal-actions" style="justify-content:flex-start;">
-               <button class="btn btn-secondary btn-tiny" id="calendarFullSyncBtn">지금 전체 다시 동기화</button>
-               <span id="calendarSyncStatus" class="muted"></span>
-             </div>`
-            : `<p class="hint">연동하면, 여기서 만드는 일정이 자동으로 구글 캘린더의 "그룹웨어 일정"이라는 전용 캘린더에 올라가요 (기존 구글 캘린더/일정은 전혀 건드리지 않아요). 아이폰의 캘린더 앱에서 그 구글 계정 동기화만 켜두면 자동으로 보여요.</p>
-             <div class="modal-actions" style="justify-content:flex-start;">
-               <button class="btn btn-primary btn-tiny" id="calendarLinkBtn">구글 캘린더 연동하기</button>
-               <span id="calendarSyncStatus" class="muted"></span>
-             </div>`
-        }
+      <div class="panel" style="padding:0; overflow:hidden; margin-bottom:16px;">
+        <iframe src="${esc(embedSrc)}" style="border:0; width:100%; height:640px; display:block;" frameborder="0" scrolling="no" title="구글 캘린더"></iframe>
       </div>
+      <p class="hint" style="margin:0 0 14px;">내 구글 캘린더예요. 화면이 비어 있으면 같은 브라우저에서 구글에 로그인해 있는지 확인해주세요. <a href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noopener">구글 캘린더 새 창으로 열기 ↗</a></p>
       <div class="toolbar"><button class="btn btn-primary" id="newEventBtn">+ 새 일정</button></div>
       <div class="panel">
         ${items.length ? items.map((e) => `
