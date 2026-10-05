@@ -1135,8 +1135,16 @@ function bindTabEvents(tab) {
           details: $("#f_memo").value || "",
           ctz: "Asia/Seoul",
         });
-        window.open("https://calendar.google.com/calendar/render?" + params.toString(), "_blank", "noopener");
-        closeModal();
+        if (ctx.user && ctx.user.email) params.set("authuser", ctx.user.email);
+        const gcalUrl = "https://calendar.google.com/calendar/render?" + params.toString();
+        const w = window.open(gcalUrl, "_blank");
+        if (w) {
+          try { w.opener = null; } catch (e) { /* 무시 */ }
+          closeModal();
+        } else {
+          // 팝업이 차단된 경우: 직접 눌러서 열 수 있게 링크를 보여줘요.
+          $("#modalBox").insertAdjacentHTML("beforeend", `<p class="hint" style="margin-top:14px;">새 창이 막혔어요. 아래 링크를 눌러 구글 캘린더에서 저장해주세요.<br><a href="${esc(gcalUrl)}" target="_blank" rel="noopener">구글 캘린더에서 일정 저장하기 ↗</a></p>`);
+        }
       });
     });
     $("#refreshCalBtn")?.addEventListener("click", () => refreshCurrentTab());
