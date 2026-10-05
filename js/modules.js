@@ -593,7 +593,7 @@ const Modules = {
         <iframe src="${esc(embedSrc)}" style="border:0; width:100%; height:640px; display:block;" frameborder="0" scrolling="no" title="구글 캘린더"></iframe>
       </div>
       <p class="hint" style="margin:0 0 14px;">내 구글 캘린더예요. 화면이 비어 있으면 같은 브라우저에서 구글에 로그인해 있는지 확인해주세요. <a href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noopener">구글 캘린더 새 창으로 열기 ↗</a></p>
-      <div class="toolbar"><button class="btn btn-primary" id="newEventBtn">+ 새 일정</button></div>
+      <div class="toolbar"><button class="btn btn-secondary" id="refreshCalBtn">달력 새로고침</button><button class="btn btn-primary" id="newEventBtn">+ 구글 캘린더에 일정 추가</button></div>
       <div class="panel">
         ${items.length ? items.map((e) => `
           <div class="list-row">
@@ -607,7 +607,7 @@ const Modules = {
 
   eventForm() {
     return `
-      <h3>새 일정</h3>
+      <h3>구글 캘린더에 일정 추가</h3>
       <div class="form-grid">
         <label>제목 <input id="f_title"></label>
         <label>시작일 <input type="date" id="f_date" value="${todayStr()}"></label>
@@ -616,7 +616,7 @@ const Modules = {
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" data-close>취소</button>
-        <button class="btn btn-primary" id="saveEventBtn">등록</button>
+        <button class="btn btn-primary" id="saveEventBtn">구글 캘린더에서 저장하기</button>
       </div>
     `;
   },

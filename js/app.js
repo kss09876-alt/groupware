@@ -1118,23 +1118,28 @@ function bindTabEvents(tab) {
   if (tab === "calendar") {
     $("#newEventBtn")?.addEventListener("click", () => {
       openModal(Modules.eventForm());
-      $("#saveEventBtn").addEventListener("click", async () => {
-        const data = await loadModule("calendar");
-        const newEvent = {
-          id: uid(),
-          title: $("#f_title").value || "(제목없음)",
-          date: $("#f_date").value || todayStr(),
-          endDate: $("#f_endDate").value || "",
-          memo: $("#f_memo").value,
-          googleEventId: null,
-        };
-        data.items.push(newEvent);
-        await saveModule("calendar", data);
+      $("#saveEventBtn").addEventListener("click", () => {
+        // 구글 캘린더의 "일정 만들기" 화면을 제목/날짜/메모가 채워진 채로 새 창에 열어줘요.
+        // 거기서 저장만 누르면 내 구글 캘린더에 바로 들어가고, 이 화면에서 "새로고침"하면 보여요.
+        const ymd = (s) => s.replace(/-/g, "");
+        const start = $("#f_date").value || todayStr();
+        let end = $("#f_endDate").value || start;
+        if (end < start) end = start;
+        const endEx = new Date(end + "T00:00:00");
+        endEx.setDate(endEx.getDate() + 1);
+        const endStr = endEx.getFullYear() + String(endEx.getMonth() + 1).padStart(2, "0") + String(endEx.getDate()).padStart(2, "0");
+        const params = new URLSearchParams({
+          action: "TEMPLATE",
+          text: $("#f_title").value || "(제목없음)",
+          dates: ymd(start) + "/" + endStr,
+          details: $("#f_memo").value || "",
+          ctz: "Asia/Seoul",
+        });
+        window.open("https://calendar.google.com/calendar/render?" + params.toString(), "_blank", "noopener");
         closeModal();
-        refreshCurrentTab();
-        syncEventToGoogleCalendar(newEvent);
       });
     });
+    $("#refreshCalBtn")?.addEventListener("click", () => refreshCurrentTab());
     $$("[data-del-event]").forEach((b) =>
       b.addEventListener("click", async () => {
         const data = await loadModule("calendar");
