@@ -185,6 +185,7 @@ async function loadModule(name, force) {
     let data = await Drive.readCollection(dataFolderId, FILES[name], DEFAULTS[name]);
     if (name === "corp") data = normalizeCorp(data);
     if (name === "sns") data = normalizeSns(data);
+    if (name === "support") data = normalizeSupport(data);
     cache[name] = data;
     setSyncStatus("동기화됨", false);
     return data;
@@ -237,6 +238,7 @@ const ctx = {
 const TAB_TITLES = {
   dashboard: "대시보드",
   issues: "오늘의 이슈",
+  support: "지원사업·정책",
   corp: "법인정보",
   notice: "공지사항",
   calendar: "일정/캘린더",
@@ -795,6 +797,128 @@ async function aiExtractBizTaxRows(file) {
   }));
 }
 
+// ---------------- 지원사업·정책 ----------------
+// 분야 칩/대상 아님 숨기기/검색어는 다시 그리지 않고 카드의 data-* 값으로 바로 숨겨요
+// (검색창에 타이핑하는 동안 포커스가 날아가지 않게). 탭에 다시 들어오면 필터는 초기화돼요.
+function applySupportFilter() {
+  const cat = $(".support-chip.active")?.dataset.supportCat || "all";
+  const hideNo = $("#supportEligOnly")?.checked;
+  const q = ($("#supportSearch")?.value || "").trim().toLowerCase();
+  let shown = 0;
+  $$("#supportGrid .support-card").forEach((el) => {
+    const visible = (cat === "all" || el.dataset.cat === cat) && !(hideNo && el.dataset.level === "no") && (!q || el.dataset.text.includes(q));
+    el.style.display = visible ? "" : "none";
+    if (visible) shown++;
+  });
+  const empty = $("#supportNoResult");
+  if (empty) empty.style.display = shown ? "none" : "";
+}
+
+function findSupportItem(data, id) {
+  return SUPPORT_CATALOG.find((x) => x.id === id) || data.custom.find((x) => x.id === id);
+}
+
+function bindSupportEvents() {
+  $$("[data-support-cat]").forEach((b) =>
+    b.addEventListener("click", () => {
+      $$("[data-support-cat]").forEach((x) => x.classList.toggle("active", x === b));
+      applySupportFilter();
+    })
+  );
+  $("#supportEligOnly")?.addEventListener("change", applySupportFilter);
+  $("#supportSearch")?.addEventListener("input", applySupportFilter);
+
+  $("#editSupportProfileBtn")?.addEventListener("click", async () => {
+    const data = await loadModule("support");
+    openModal(Modules.supportProfileForm(data.profile));
+    $("#saveSupportProfileBtn").addEventListener("click", async () => {
+      const d = await loadModule("support", true);
+      d.profile = {
+        ...d.profile,
+        ceoBirth: $("#sp_ceoBirth").value,
+        region: $("#sp_region").value,
+        employees: $("#sp_employees").value.trim(),
+        industry: $("#sp_industry").value.trim(),
+        isVenture: $("#sp_isVenture").checked,
+        hasLab: $("#sp_hasLab").checked,
+      };
+      await saveModule("support", d);
+      closeModal();
+      refreshCurrentTab();
+    });
+  });
+
+  $("#addSupportBtn")?.addEventListener("click", () => {
+    openModal(Modules.supportCustomForm());
+    $("#saveSupportCustomBtn").addEventListener("click", async () => {
+      const name = $("#sc_name").value.trim();
+      if (!name) return alert("사업명을 입력해주세요.");
+      const link = $("#sc_link").value.trim();
+      const d = await loadModule("support", true);
+      const id = "c_" + uid();
+      d.custom.push({
+        id,
+        name,
+        org: $("#sc_org").value.trim(),
+        cat: $("#sc_cat").value,
+        benefit: $("#sc_benefit").value.trim(),
+        target: $("#sc_target").value.trim(),
+        // 링크는 http(s) 주소만 저장해요 (javascript: 같은 주소가 버튼에 들어가지 않게).
+        link: /^https?:\/\//i.test(link) ? link : "",
+      });
+      const deadline = $("#sc_deadline").value;
+      d.tracks[id] = { status: "관심", deadline, memo: "", updatedAt: nowStr() };
+      await saveModule("support", d);
+      closeModal();
+      refreshCurrentTab();
+    });
+  });
+
+  $$("[data-support-status]").forEach((sel) =>
+    sel.addEventListener("change", async () => {
+      const id = sel.dataset.supportStatus;
+      const d = await loadModule("support", true);
+      d.tracks[id] = { ...(d.tracks[id] || {}), status: sel.value, updatedAt: nowStr() };
+      await saveModule("support", d);
+      refreshCurrentTab();
+    })
+  );
+
+  $$("[data-support-track]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const id = b.dataset.supportTrack;
+      const data = await loadModule("support");
+      const item = findSupportItem(data, id);
+      if (!item) return;
+      openModal(Modules.supportTrackForm(item, data.tracks[id]));
+      $("#saveSupportTrackBtn").addEventListener("click", async () => {
+        const d = await loadModule("support", true);
+        d.tracks[id] = {
+          status: $("#st_status").value,
+          deadline: $("#st_deadline").value,
+          memo: $("#st_memo").value.trim(),
+          updatedAt: nowStr(),
+        };
+        await saveModule("support", d);
+        closeModal();
+        refreshCurrentTab();
+      });
+    })
+  );
+
+  $$("[data-support-del]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm("이 사업을 목록에서 삭제할까요?")) return;
+      const id = b.dataset.supportDel;
+      const d = await loadModule("support", true);
+      d.custom = d.custom.filter((x) => x.id !== id);
+      delete d.tracks[id];
+      await saveModule("support", d);
+      refreshCurrentTab();
+    })
+  );
+}
+
 // ---------------- 탭별 이벤트 바인딩 ----------------
 function bindTabEvents(tab) {
   if (tab === "dashboard") {
@@ -805,6 +929,8 @@ function bindTabEvents(tab) {
     $("#fetchIssuesBtn")?.addEventListener("click", fetchDailyIssues);
     autoFetchDailyIssuesIfStale();
   }
+
+  if (tab === "support") bindSupportEvents();
 
   if (tab === "corp") {
     $$("[data-corp-subtab]").forEach((b) =>

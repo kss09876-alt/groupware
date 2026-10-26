@@ -10,6 +10,7 @@ const FILES = {
   issues: "issues.json",
   accounting: "accounting.json",
   contracts: "contracts.json",
+  support: "support.json",
 };
 
 const DEFAULTS = {
@@ -81,6 +82,12 @@ const DEFAULTS = {
   contracts: {
     items: [],
   },
+  // 지원사업·정책 탭: 자격 판정용 회사 프로필 + 사업별 내 진행상태 + 직접 추가한 사업
+  support: {
+    profile: { ceoBirth: "", region: "", employees: "", industry: "", isVenture: false, hasLab: false },
+    tracks: {}, // { [사업 id]: { status, deadline, memo, updatedAt } }
+    custom: [], // [{ id, name, org, cat, summary, benefit, target, period, link }]
+  },
 };
 
 // 예전에 저장된 corp.json(구버전 스키마)을 불러와도 깨지지 않도록,
@@ -116,6 +123,18 @@ function normalizeSns(s) {
     items: s.items || [],
     goals: { ...d.goals, ...(s.goals || {}) },
     dailyTrends: { ...d.dailyTrends, ...(s.dailyTrends || {}) },
+  };
+}
+
+// 예전에 저장된 support.json에도 새 필드를 채워줍니다.
+function normalizeSupport(s) {
+  const d = DEFAULTS.support;
+  return {
+    ...d,
+    ...s,
+    profile: { ...d.profile, ...(s.profile || {}) },
+    tracks: s.tracks || {},
+    custom: s.custom || [],
   };
 }
 
@@ -292,6 +311,221 @@ const Modules = {
               : `<div class="empty">${isToday ? "뉴스를 찾지 못했어요." : "잠시 후 자동으로 오늘의 뉴스를 받아와요. 바로 보고 싶으면 위 새로고침을 눌러주세요."}</div>`
           }
         </div>
+      </div>
+    `;
+  },
+
+  // ---------------- 지원사업·정책 (스타트업/청년기업/창업기업 지원사업 한눈에 보기) ----------------
+  // 카탈로그(js/support.js)의 대표 지원사업을 우리 회사 프로필(법인정보 설립일 + 대표자 나이/근로자 수 등)과
+  // 비교해 "해당/확인 필요/대상 아님"을 자동으로 표시하고, 사업별 진행상태·마감일·메모를 드라이브에 저장해요.
+  // 필터(분야/해당만/검색)는 다시 그리지 않고 화면에서 바로 숨기고 보여주는 방식이에요 (app.js 참고).
+  async support(ctx) {
+    const [data, corp, issues] = await Promise.all([ctx.load("support"), ctx.load("corp"), ctx.load("issues")]);
+    const p = data.profile;
+    const years = supportBizYears(corp.foundedDate);
+    const age = supportCeoAge(p);
+    const catLabel = (key) => (SUPPORT_CATEGORIES.find((c) => c.key === key) || {}).label || "기타";
+    const regionLabel = { metro_dense: "수도권 과밀억제권역", metro: "수도권(과밀억제권역 외)", local: "비수도권" }[p.region] || "미입력";
+
+    const all = [...SUPPORT_CATALOG, ...data.custom.map((c) => ({ ...c, custom: true }))];
+    const rows = all.map((item) => ({
+      item,
+      ev: item.custom ? { level: "check", reasons: ["직접 등록한 사업 — 공고문으로 요건 확인"] } : supportEvaluate(item.rule, p, corp.foundedDate),
+      track: data.tracks[item.id] || null,
+    }));
+    const okCount = rows.filter((r) => r.ev.level === "ok").length;
+    const checkCount = rows.filter((r) => r.ev.level === "check").length;
+    const levelOrder = { ok: 0, check: 1, done: 2, no: 3 };
+    rows.sort((a, b) => levelOrder[a.ev.level] - levelOrder[b.ev.level]);
+
+    const badge = (ev) =>
+      ({
+        ok: `<span class="tag tag-ok">✓ 해당</span>`,
+        check: `<span class="tag tag-wait">확인 필요</span>`,
+        no: `<span class="tag tag-no">대상 아님</span>`,
+        done: `<span class="tag tag-ok">보유 중</span>`,
+      }[ev.level]);
+    const dday = (date) => {
+      const d = supportParseDate(date);
+      if (!d) return "";
+      const today = new Date(todayStr() + "T00:00:00");
+      const diff = Math.round((d - today) / 86400000);
+      const cls = diff < 0 ? "" : diff <= 7 ? "tag-no" : diff <= 30 ? "tag-wait" : "";
+      return `<span class="tag ${cls}">${diff < 0 ? "마감" : diff === 0 ? "D-Day" : "D-" + diff}</span>`;
+    };
+
+    const tracked = rows
+      .filter((r) => r.track && r.track.status)
+      .sort((a, b) => (a.track.deadline || "9999").localeCompare(b.track.deadline || "9999"));
+    const supportNews = (issues.news || []).filter((n) => n.category === "지원사업").slice(0, 5);
+
+    const card = ({ item, ev, track }) => {
+      const note = typeof item.note === "function" ? item.note(p) : "";
+      const searchText = [item.name, item.org, item.summary, item.target, item.benefit].join(" ").toLowerCase();
+      const searchLink = "https://search.naver.com/search.naver?query=" + encodeURIComponent(new Date().getFullYear() + " " + item.name + " 공고");
+      return `
+        <div class="panel support-card" data-cat="${esc(item.cat)}" data-level="${ev.level}" data-text="${esc(searchText)}">
+          <div class="support-card-head">
+            <div>
+              <span class="tag">${esc(catLabel(item.cat))}</span>${badge(ev)}${track && track.deadline ? dday(track.deadline) : ""}
+              <div class="support-name">${esc(item.name)}</div>
+              <div class="doc-meta">${esc(item.org || "")}</div>
+            </div>
+          </div>
+          ${item.summary ? `<div class="support-summary">${esc(item.summary)}</div>` : ""}
+          <table class="kv support-kv"><tbody>
+            ${item.benefit ? `<tr><th>지원내용</th><td>${esc(item.benefit)}</td></tr>` : ""}
+            ${item.target ? `<tr><th>대상</th><td>${esc(item.target)}</td></tr>` : ""}
+            ${item.period ? `<tr><th>시기</th><td>${esc(item.period)}</td></tr>` : ""}
+          </tbody></table>
+          <div class="support-reason ${ev.level}">${esc(ev.reasons.join(" · "))}${note ? `<br>💡 ${esc(note)}` : ""}</div>
+          ${track && track.memo ? `<div class="support-memo">📝 ${esc(track.memo)}</div>` : ""}
+          <div class="support-actions">
+            <select data-support-status="${esc(item.id)}">
+              <option value="">진행상태 —</option>
+              ${SUPPORT_STATUSES.map((s) => `<option ${track && track.status === s ? "selected" : ""}>${s}</option>`).join("")}
+            </select>
+            <button class="btn btn-tiny btn-secondary" data-support-track="${esc(item.id)}">마감일·메모</button>
+            <a class="btn btn-tiny btn-secondary" href="${esc(searchLink)}" target="_blank" rel="noopener">최신 공고 검색</a>
+            ${item.link ? `<a class="btn btn-tiny btn-secondary" href="${esc(item.link)}" target="_blank" rel="noopener">공식 사이트 ↗</a>` : ""}
+            ${item.custom ? `<button class="btn btn-tiny btn-danger" data-support-del="${esc(item.id)}">삭제</button>` : ""}
+          </div>
+        </div>`;
+    };
+
+    return `
+      <div class="grid grid-4">
+        <div class="stat-card"><div class="stat-label">업력 (법인설립일 기준)</div><div class="stat-value">${years != null ? supportFormatYears(years) : "-"}</div><div class="muted" style="margin-left:0">${years != null ? esc(corp.foundedDate) + " 설립" : "법인정보에 설립일을 입력해주세요"}</div></div>
+        <div class="stat-card"><div class="stat-label">대표자 나이</div><div class="stat-value">${age != null ? "만 " + age + "세" : "-"}</div><div class="muted" style="margin-left:0">${age != null ? (age <= 34 ? "청년창업(만 34세 이하) 해당" : age <= 39 ? "청년(만 39세 이하) 해당" : "청년 요건 초과") : "프로필에 생년월일 입력"}</div></div>
+        <div class="stat-card"><div class="stat-label">상시근로자 · 소재지</div><div class="stat-value">${p.employees !== "" ? esc(p.employees) + "명" : "-"}</div><div class="muted" style="margin-left:0">${esc(regionLabel)}</div></div>
+        <div class="stat-card"><div class="stat-label">지원 가능 사업</div><div class="stat-value">${okCount}건</div><div class="muted" style="margin-left:0">+ 확인 필요 ${checkCount}건</div></div>
+      </div>
+
+      <div class="panel" style="margin-bottom:16px">
+        <div class="toolbar" style="justify-content:space-between; align-items:center; margin-bottom:8px">
+          <h3 style="margin:0">우리 회사 지원 자격 프로필</h3>
+          <div class="quick-actions">
+            <button class="btn btn-tiny btn-secondary" id="editSupportProfileBtn">프로필 수정</button>
+            <button class="btn btn-tiny btn-primary" id="addSupportBtn">+ 사업 직접 추가</button>
+          </div>
+        </div>
+        <p class="hint" style="margin:0">설립일은 법인정보 탭 값을 그대로 써요. 대표자 생년월일·근로자 수·소재지를 입력해두면 업력/청년/고용 요건을 자동으로 판정해드려요.
+          ${p.industry ? `<br>주력 분야: <b>${esc(p.industry)}</b>` : ""}${p.isVenture ? ` · <span class="tag tag-ok">벤처기업</span>` : ""}${p.hasLab ? `<span class="tag tag-ok">기업부설연구소</span>` : ""}</p>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="panel">
+          <h3>내가 챙기는 사업 (${tracked.length})</h3>
+          ${
+            tracked.length
+              ? tracked
+                  .map(
+                    ({ item, track }) => `
+              <div class="list-row"><div><span class="tag ${track.status === "선정" ? "tag-ok" : track.status === "탈락" ? "tag-no" : track.status === "신청완료" ? "tag-wait" : ""}">${esc(track.status)}</span><b>${esc(item.name)}</b>${track.deadline ? `<span class="muted">${esc(track.deadline)} 마감</span>` : ""}</div><div>${track.deadline ? dday(track.deadline) : ""}</div></div>`
+                  )
+                  .join("")
+              : `<div class="empty">아래 카드에서 진행상태를 고르면 여기에 모여요. 마감일을 넣으면 D-day도 보여드려요.</div>`
+          }
+        </div>
+        <div class="panel">
+          <h3>실시간 공고 바로가기</h3>
+          <div class="support-portals">
+            ${SUPPORT_PORTALS.map((s) => `<a class="support-portal" href="${esc(s.link)}" target="_blank" rel="noopener"><b>${esc(s.name)} ↗</b><span>${esc(s.desc)}</span></a>`).join("")}
+          </div>
+          ${
+            supportNews.length
+              ? `<h4>지원사업 관련 뉴스 ${issues.date ? `<span class="muted">(${esc(issues.date)})</span>` : ""}</h4>` +
+                supportNews.map((n) => `<div class="list-row"><div><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a></div></div>`).join("")
+              : ""
+          }
+        </div>
+      </div>
+
+      <div class="panel" style="margin-bottom:16px">
+        <div class="support-filter">
+          <div class="support-chips">
+            <button class="support-chip active" data-support-cat="all">전체</button>
+            ${SUPPORT_CATEGORIES.map((c) => `<button class="support-chip" data-support-cat="${c.key}">${esc(c.label)}</button>`).join("")}
+          </div>
+          <div class="support-filter-right">
+            <label class="filter-inline"><input type="checkbox" id="supportEligOnly"> 대상 아님 숨기기</label>
+            <input id="supportSearch" class="support-search" placeholder="사업명·기관·키워드 검색">
+          </div>
+        </div>
+        <p class="hint" style="margin:10px 0 0">정부 지원사업은 매년 공고가 새로 나고 금액·요건이 바뀌어요. 여기 내용은 2026년 통합공고 기준의 요약이니, 신청 전에 꼭 "최신 공고 검색"으로 올해 공고문을 확인하세요.</p>
+      </div>
+
+      <div class="support-grid" id="supportGrid">
+        ${rows.map(card).join("")}
+      </div>
+      <div class="empty" id="supportNoResult" style="display:none">조건에 맞는 사업이 없어요.</div>
+    `;
+  },
+
+  supportProfileForm(p) {
+    return `
+      <h3>지원 자격 프로필</h3>
+      <div class="form-grid">
+        <label>대표자 생년월일 <input type="date" id="sp_ceoBirth" value="${esc(p.ceoBirth)}"></label>
+        <label>본사 소재지
+          <select id="sp_region">
+            <option value="">선택</option>
+            <option value="metro_dense" ${p.region === "metro_dense" ? "selected" : ""}>수도권 과밀억제권역 (서울 전역, 인천·경기 일부)</option>
+            <option value="metro" ${p.region === "metro" ? "selected" : ""}>수도권 (과밀억제권역 외)</option>
+            <option value="local" ${p.region === "local" ? "selected" : ""}>비수도권</option>
+          </select>
+        </label>
+        <label>상시근로자 수 (고용보험 피보험자, 대표 제외) <input type="number" min="0" id="sp_employees" value="${esc(p.employees)}" placeholder="예: 3"></label>
+        <label>주력 분야/업종 <input id="sp_industry" value="${esc(p.industry)}" placeholder="예: AI 콘텐츠 제작, SNS 마케팅"></label>
+        <label class="checkbox-label"><input type="checkbox" id="sp_isVenture" ${p.isVenture ? "checked" : ""}> 벤처기업 확인 보유</label>
+        <label class="checkbox-label"><input type="checkbox" id="sp_hasLab" ${p.hasLab ? "checked" : ""}> 기업부설연구소/연구개발전담부서 보유</label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="saveSupportProfileBtn">저장</button>
+      </div>
+    `;
+  },
+
+  supportTrackForm(item, track) {
+    const t = track || {};
+    return `
+      <h3>${esc(item.name)}</h3>
+      <div class="form-grid">
+        <label>진행상태
+          <select id="st_status">
+            <option value="">—</option>
+            ${SUPPORT_STATUSES.map((s) => `<option ${t.status === s ? "selected" : ""}>${s}</option>`).join("")}
+          </select>
+        </label>
+        <label>신청 마감일 <input type="date" id="st_deadline" value="${esc(t.deadline || "")}"></label>
+        <label>메모 <textarea id="st_memo" rows="4" placeholder="예: 사업계획서 초안 작성 중, 담당자 연락처 등">${esc(t.memo || "")}</textarea></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="saveSupportTrackBtn">저장</button>
+      </div>
+    `;
+  },
+
+  supportCustomForm() {
+    return `
+      <h3>지원사업 직접 추가</h3>
+      <p class="hint">기업마당·K-Startup 등에서 찾은 공고를 우리 회사 목록에 추가해두세요.</p>
+      <div class="form-grid">
+        <label>사업명 <input id="sc_name" placeholder="예: 2026 서울시 청년창업 지원사업"></label>
+        <label>주관기관 <input id="sc_org" placeholder="예: 서울경제진흥원"></label>
+        <label>분야
+          <select id="sc_cat">${SUPPORT_CATEGORIES.map((c) => `<option value="${c.key}">${esc(c.label)}</option>`).join("")}</select>
+        </label>
+        <label>지원내용 <input id="sc_benefit" placeholder="예: 사업화 자금 최대 5천만 원"></label>
+        <label>대상 <input id="sc_target" placeholder="예: 서울 소재 업력 3년 이내"></label>
+        <label>공고 링크 <input id="sc_link" placeholder="https://"></label>
+        <label>신청 마감일 <input type="date" id="sc_deadline"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="saveSupportCustomBtn">추가</button>
       </div>
     `;
   },
