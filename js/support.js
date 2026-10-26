@@ -11,6 +11,7 @@
 //   maxCeoAge: 대표자 만 나이 상한
 //   minEmployees / maxEmployees: 상시근로자(고용보험 피보험자) 수 하한 / 상한
 //   doneFlag: 프로필에서 이미 갖춘 항목(예: 벤처인증)이면 "보유 중"으로 표시
+//   region: 해당 지역 소재 기업만 대상 (예: "gwangju" — 프로필의 본사 소재지와 비교)
 //   needs: 자동으로 판단할 수 없어 직접 확인해야 하는 조건들
 
 const SUPPORT_CATEGORIES = [
@@ -21,6 +22,16 @@ const SUPPORT_CATEGORIES = [
   { key: "tax", label: "세제·인증" },
   { key: "content", label: "콘텐츠·AI 특화" },
   { key: "space", label: "공간·바우처·기타" },
+  { key: "gwangju", label: "광주 지역" },
+];
+
+// 프로필 "본사 소재지" 선택지. 창업중소기업 세액감면 계산에 쓰는 권역(metro_dense/metro/local)과
+// 지역 전용 사업 판정(gwangju)을 함께 담아요. 광주는 비수도권이라 세액감면에선 local과 같게 봐요.
+const SUPPORT_REGIONS = [
+  { key: "gwangju", label: "광주 (전남광주통합특별시, 비수도권)" },
+  { key: "local", label: "그 외 비수도권" },
+  { key: "metro", label: "수도권 (과밀억제권역 외)" },
+  { key: "metro_dense", label: "수도권 과밀억제권역 (서울 전역, 인천·경기 일부)" },
 ];
 
 const SUPPORT_STATUSES = ["관심", "준비중", "신청완료", "선정", "탈락"];
@@ -35,6 +46,18 @@ const SUPPORT_PORTALS = [
   { name: "기술보증기금", desc: "청년창업·기술 보증", link: "https://www.kibo.or.kr/" },
   { name: "신용보증기금", desc: "창업기업 보증", link: "https://www.kodit.or.kr/" },
   { name: "SMTECH", desc: "중소기업 R&D(디딤돌 등) 공고", link: "https://www.smtech.go.kr/" },
+];
+
+// 광주 지역 공고 포털 (본사 소재지가 광주일 때 따로 묶어서 보여줘요)
+const SUPPORT_PORTALS_GWANGJU = [
+  { name: "광주 기업지원 통합공고", desc: "광주 기업지원 사업 공고 모아보기", link: "https://www.gjbizinfo.or.kr/" },
+  { name: "광주 창업 플랫폼", desc: "광주 창업지원 사업·프로그램", link: "https://gwangju-startup.kr/home" },
+  { name: "전남광주 청년통합플랫폼", desc: "청년 창업·일자리·주거 정책", link: "https://youth.jeonnam-gwangju.go.kr/www/" },
+  { name: "광주테크노파크 사업공고", desc: "창업·제조·청년창업 거주시설 공고", link: "https://www.gjtp.or.kr/home/business.cs" },
+  { name: "광주정보문화산업진흥원", desc: "콘텐츠코리아랩·지역 콘텐츠기업 지원", link: "https://www.gicon.or.kr/" },
+  { name: "인공지능산업융합사업단", desc: "광주 AI 창업캠프·실증 지원", link: "https://www.aica-gj.kr/" },
+  { name: "광주창조경제혁신센터", desc: "보육·투자 연계 프로그램", link: "https://ccei.creativekorea.or.kr/gwangju/" },
+  { name: "광주신용보증재단", desc: "소기업·소상공인 특례보증", link: "https://www.gjsinbo.or.kr/" },
 ];
 
 const SUPPORT_CATALOG = [
@@ -200,6 +223,7 @@ const SUPPORT_CATALOG = [
     period: "연중(지역 운영기관별 참여기업 모집, 예산 소진 시 마감)",
     link: "https://www.work24.go.kr/",
     rule: { minEmployees: 5, needs: ["채용할 청년의 취업애로 요건 등"] },
+    note: (p) => (p.region === "gwangju" || p.region === "local" ? "비수도권 유형 해당 — 지방 소재 기업 우대(청년 근속 지원도 비수도권 우대)" : ""),
   },
   {
     id: "durunuri",
@@ -243,7 +267,7 @@ const SUPPORT_CATALOG = [
       if (age == null) return "대표자 생년월일을 입력하면 감면율을 계산해드려요.";
       const youth = age <= 34;
       if (p.region === "metro_dense") return youth ? "청년창업 · 과밀억제권역 내 → 50% 감면 예상" : "과밀억제권역 내 일반 창업 → 감면 없음(벤처 등 별도 요건 확인)";
-      if (p.region === "metro" || p.region === "local") return youth ? "청년창업 · 과밀억제권역 외 → 100% 감면 예상" : "과밀억제권역 외 일반 창업 → 50% 감면 예상";
+      if (p.region === "metro" || p.region === "local" || p.region === "gwangju") return youth ? "청년창업 · 과밀억제권역 외 → 100% 감면 예상" : "과밀억제권역 외 일반 창업 → 50% 감면 예상";
       return youth ? "청년창업 대상 (지역에 따라 50~100%)" : "지역에 따라 0~50%";
     },
   },
@@ -371,6 +395,93 @@ const SUPPORT_CATALOG = [
     link: "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/list.do",
     rule: { needs: ["본사 소재지"] },
   },
+
+  // ---------- 광주 지역 (본사 소재지가 광주인 기업 대상) ----------
+  // 2026년 광주·전남 행정통합으로 "전남광주통합특별시" 명의로 나오는 공고도 있어요.
+  {
+    id: "gj_youth_academy",
+    name: "전남광주 청년창업 사관학교",
+    org: "전남광주통합특별시",
+    cat: "gwangju",
+    summary: "청년 창업자를 선발해 2년간 맞춤형 보육 — 광역지자체가 기술사업화 자금을 직접 지원 (2026년 2기부터 광주 권역까지 확대)",
+    benefit: "월 100만 원 바우처 + 기술사업화 자금 + 2년간 보육·멘토링 (2026년 2기 121명 선발)",
+    target: "만 18~45세 예비창업자 및 창업 5년 이내 초기 창업자",
+    period: "연 1회 기수 모집 (2026년 2기 출범)",
+    link: "https://youth.jeonnam-gwangju.go.kr/www/",
+    rule: { region: "gwangju", maxYears: 5, maxCeoAge: 45 },
+  },
+  {
+    id: "gj_content_lab",
+    name: "광주콘텐츠코리아랩 콘텐츠 창·제작 지원",
+    org: "광주정보문화산업진흥원(GICON)",
+    cat: "gwangju",
+    summary: "콘텐츠 IP 창작자·초기 콘텐츠 기업의 단계별(주니어→부스터) 창·제작 지원",
+    benefit: "단계별 창·제작 지원금 + 멘토링·제작 인프라 (웹툰·웹애니·실감영상 등 IP 분야)",
+    target: "예비창업자 및 창업 3년 미만 기업 (단계별 요건 상이)",
+    period: "보통 3~4월 공고 (추가 모집 있음)",
+    link: "https://www.gicon.or.kr/",
+    rule: { region: "gwangju", maxYears: 3 },
+  },
+  {
+    id: "gj_content_biz",
+    name: "광주 지역 콘텐츠기업 지원 (GICON)",
+    org: "광주정보문화산업진흥원(GICON)",
+    cat: "gwangju",
+    summary: "광주 소재 콘텐츠기업 대상 여러 단발성 지원 — 투자진흥지구 보증료·출원료, 문화콘텐츠 SW 라이선스 사용료, 콘텐츠 IP 지역특화 상품개발, IR DAY 등",
+    benefit: "보증료·출원료 기업당 최대 500만 원 이내, SW 라이선스 사용료, 상품개발 과제비, IR 컨설팅·시상금 등",
+    target: "광주 소재 콘텐츠기업 (사업별 요건 상이)",
+    period: "연중 수시 (2026년 기준 5~10월에 여러 건 공고)",
+    link: "https://www.gicon.or.kr/",
+    rule: { region: "gwangju", needs: ["사업별 세부 요건"] },
+  },
+  {
+    id: "gj_aica",
+    name: "광주 AI 창업 지원 (AI창업캠프·실증)",
+    org: "인공지능산업융합사업단(AICA) · 광주광역시",
+    cat: "gwangju",
+    summary: "국가 AI 융복합단지(2단계 2025~2029)의 AI 스타트업 지원 — 창업캠프 입주, AI 데이터센터 컴퓨팅 자원·실증, 시제품 제작 지원",
+    benefit: "AI창업캠프 입주공간, 컴퓨팅 자원·실증 인프라, 시제품·서비스 제작 지원(과거 최대 1억 원 규모) 등",
+    target: "광주 소재(또는 이전 예정) AI 관련 창업기업",
+    period: "수시 (입주기업은 차수별 모집)",
+    link: "https://www.aica-gj.kr/",
+    rule: { region: "gwangju", needs: ["AI 관련 사업 여부"] },
+  },
+  {
+    id: "gj_tp",
+    name: "광주테크노파크 창업기업 지원",
+    org: "광주테크노파크",
+    cat: "gwangju",
+    summary: "제조 창업기업 시제품 개발 원스톱 지원, 청년창업 거주지원시설(창업하여家) 입주 등",
+    benefit: "시제품 개발 기업당 최대 700만 원 내외, 청년 창업자 거주·업무 공간 등",
+    target: "광주 소재 업력 7년 이내 창업기업 (신산업 분야 10년 이내, 사업별 상이)",
+    period: "보통 4~9월 공고",
+    link: "https://www.gjtp.or.kr/home/business.cs",
+    rule: { region: "gwangju", maxYears: 7, needs: ["제조·신산업 분야 등 사업별 요건"] },
+  },
+  {
+    id: "gj_sinbo",
+    name: "광주 소기업·소상공인 특례보증 + 이차보전",
+    org: "광주신용보증재단 · 전남광주통합특별시",
+    cat: "gwangju",
+    summary: "광주 사업장 소기업·소상공인의 은행 대출을 재단이 보증하고, 시가 이자 일부를 지원 (청년창업 특례보증 별도 공고 있음)",
+    benefit: "업체당 최대 5,000만 원 보증 + 1년간 연 3~4% 이차보전 (2026년 하반기 기준)",
+    target: "광주 소재 소기업·소상공인 (일부 제한 업종 제외)",
+    period: "예산 소진 시까지 (상·하반기)",
+    link: "https://www.gjsinbo.or.kr/",
+    rule: { region: "gwangju", needs: ["소기업·소상공인 기준"] },
+  },
+  {
+    id: "gj_ccei",
+    name: "광주창조경제혁신센터 · 광주 청년 창업 성장 지원",
+    org: "광주창조경제혁신센터 · 광주광역시",
+    cat: "gwangju",
+    summary: "광주 청년 창업기업 대상 액셀러레이터 매칭, 창업 성장 육성 프로젝트, 투자 연계 보육 프로그램",
+    benefit: "전문 액셀러레이팅, 사업화 지원금, IR·투자 연계 (프로그램별 상이)",
+    target: "광주 소재 예비·초기 창업기업 (청년 대상 프로그램 다수)",
+    period: "연중 (프로그램별 수시 모집)",
+    link: "https://ccei.creativekorea.or.kr/gwangju/",
+    rule: { region: "gwangju", needs: ["프로그램별 요건"] },
+  },
 ];
 
 // "2024-03-05", "2024. 3. 5.", "2024년 3월 5일" 같은 형식을 모두 Date로 바꿔요.
@@ -417,6 +528,10 @@ function supportEvaluate(rule, profile, foundedDate) {
 
   if (rule.doneFlag && p[rule.doneFlag]) return { level: "done", reasons: ["이미 보유 중"] };
 
+  if (rule.region) {
+    if (!p.region) check.push("본사 소재지 입력 필요");
+    else if (p.region !== rule.region) no.push("지역 전용 사업 (본사 소재지 다름)");
+  }
   if (rule.preFounding) {
     if (years != null) no.push("이미 설립된 기업 (예비창업자 대상)");
   }

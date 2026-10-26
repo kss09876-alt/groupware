@@ -84,7 +84,7 @@ const DEFAULTS = {
   },
   // 지원사업·정책 탭: 자격 판정용 회사 프로필 + 사업별 내 진행상태 + 직접 추가한 사업
   support: {
-    profile: { ceoBirth: "", region: "", employees: "", industry: "", isVenture: false, hasLab: false },
+    profile: { ceoBirth: "", region: "gwangju", employees: "", industry: "", isVenture: false, hasLab: false },
     tracks: {}, // { [사업 id]: { status, deadline, memo, updatedAt } }
     custom: [], // [{ id, name, org, cat, summary, benefit, target, period, link }]
   },
@@ -325,7 +325,7 @@ const Modules = {
     const years = supportBizYears(corp.foundedDate);
     const age = supportCeoAge(p);
     const catLabel = (key) => (SUPPORT_CATEGORIES.find((c) => c.key === key) || {}).label || "기타";
-    const regionLabel = { metro_dense: "수도권 과밀억제권역", metro: "수도권(과밀억제권역 외)", local: "비수도권" }[p.region] || "미입력";
+    const regionLabel = (SUPPORT_REGIONS.find((r) => r.key === p.region) || {}).label || "미입력";
 
     const all = [...SUPPORT_CATALOG, ...data.custom.map((c) => ({ ...c, custom: true }))];
     const rows = all.map((item) => ({
@@ -359,6 +359,7 @@ const Modules = {
       .sort((a, b) => (a.track.deadline || "9999").localeCompare(b.track.deadline || "9999"));
     const supportNews = (issues.news || []).filter((n) => n.category === "지원사업").slice(0, 5);
 
+    const portal = (s) => `<a class="support-portal" href="${esc(s.link)}" target="_blank" rel="noopener"><b>${esc(s.name)} ↗</b><span>${esc(s.desc)}</span></a>`;
     const card = ({ item, ev, track }) => {
       const note = typeof item.note === "function" ? item.note(p) : "";
       const searchText = [item.name, item.org, item.summary, item.target, item.benefit].join(" ").toLowerCase();
@@ -430,8 +431,9 @@ const Modules = {
         <div class="panel">
           <h3>실시간 공고 바로가기</h3>
           <div class="support-portals">
-            ${SUPPORT_PORTALS.map((s) => `<a class="support-portal" href="${esc(s.link)}" target="_blank" rel="noopener"><b>${esc(s.name)} ↗</b><span>${esc(s.desc)}</span></a>`).join("")}
+            ${SUPPORT_PORTALS.map(portal).join("")}
           </div>
+          ${p.region === "gwangju" ? `<h4>광주 지역</h4><div class="support-portals">${SUPPORT_PORTALS_GWANGJU.map(portal).join("")}</div>` : ""}
           ${
             supportNews.length
               ? `<h4>지원사업 관련 뉴스 ${issues.date ? `<span class="muted">(${esc(issues.date)})</span>` : ""}</h4>` +
@@ -470,9 +472,7 @@ const Modules = {
         <label>본사 소재지
           <select id="sp_region">
             <option value="">선택</option>
-            <option value="metro_dense" ${p.region === "metro_dense" ? "selected" : ""}>수도권 과밀억제권역 (서울 전역, 인천·경기 일부)</option>
-            <option value="metro" ${p.region === "metro" ? "selected" : ""}>수도권 (과밀억제권역 외)</option>
-            <option value="local" ${p.region === "local" ? "selected" : ""}>비수도권</option>
+            ${SUPPORT_REGIONS.map((r) => `<option value="${r.key}" ${p.region === r.key ? "selected" : ""}>${esc(r.label)}</option>`).join("")}
           </select>
         </label>
         <label>상시근로자 수 (고용보험 피보험자, 대표 제외) <input type="number" min="0" id="sp_employees" value="${esc(p.employees)}" placeholder="예: 3"></label>
