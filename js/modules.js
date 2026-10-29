@@ -10,7 +10,7 @@ const FILES = {
   issues: "issues.json",
   accounting: "accounting.json",
   contracts: "contracts.json",
-  support: "support.json",
+  grants: "grants.json",
 };
 
 const DEFAULTS = {
@@ -82,11 +82,10 @@ const DEFAULTS = {
   contracts: {
     items: [],
   },
-  // 지원사업·정책 탭: 자격 판정용 회사 프로필 + 사업별 내 진행상태 + 직접 추가한 사업
-  support: {
-    profile: { ceoBirth: "", region: "gwangju", employees: "", industry: "", isVenture: false, hasLab: false },
-    tracks: {}, // { [사업 id]: { status, deadline, memo, updatedAt } }
-    custom: [], // [{ id, name, org, cat, summary, benefit, target, period, link }]
+  grants: {
+    items: null,
+    profile: { founderAge: "", region: "", industry: "", employees: "" },
+    lastFetched: "",
   },
 };
 
@@ -126,18 +125,6 @@ function normalizeSns(s) {
   };
 }
 
-// 예전에 저장된 support.json에도 새 필드를 채워줍니다.
-function normalizeSupport(s) {
-  const d = DEFAULTS.support;
-  return {
-    ...d,
-    ...s,
-    profile: { ...d.profile, ...(s.profile || {}) },
-    tracks: s.tracks || {},
-    custom: s.custom || [],
-  };
-}
-
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -168,6 +155,68 @@ function maskRrn(rrn) {
   const m = s.match(/^(\d{6})-?(\d)\d{6}$/);
   if (!m) return esc(s);
   return `${m[1]}-${m[2]}●●●●●●`;
+}
+
+
+const GRANT_CATEGORIES = ["창업지원", "청년", "R&D", "투자·융자", "세제혜택", "공간·교육", "포털·상시"];
+const GRANT_STATUSES = ["미검토", "관심", "준비중", "신청완료", "선정", "탈락", "제외"];
+
+// 처음 열었을 때 보이는 기본 목록(공식 포털/제도). 마감일·요건은 해마다 바뀌니 반드시 공고문 원문에서 확인하세요.
+function grantSeed() {
+  const mk = (title, org, category, summary, url, extra) => ({
+    id: uid(), title, org, category, target: "", amount: "", applyStart: "", deadline: "", url, summary,
+    maxYears: 0, youthOnly: false, region: "", status: "미검토", memo: "", source: "seed", createdAt: nowStr(), ...(extra || {}),
+  });
+  return [
+    mk("K-Startup 창업지원포털 (사업공고 모음)", "창업진흥원", "포털·상시", "예비·초기·도약 창업기업 지원사업 공고가 모이는 대표 포털. 관심 분야 알림 설정 추천.", "https://www.k-startup.go.kr"),
+    mk("기업마당 (중소기업 지원사업 통합)", "중소벤처기업부", "포털·상시", "정부·지자체 중소기업 지원사업(자금·기술·인력·판로 등) 통합 공고.", "https://www.bizinfo.go.kr"),
+    mk("TIPS (민간투자 연계 기술창업 지원)", "중소벤처기업부", "R&D", "민간 운영사 투자 + 정부 R&D 연계. 운영사 추천 필요.", "https://www.jointips.or.kr", { maxYears: 7 }),
+    mk("창업진흥원 창업지원사업", "창업진흥원", "창업지원", "예비창업패키지·초기창업패키지 등. 업력·대표자 조건은 공고마다 다름.", "https://www.kised.or.kr"),
+    mk("신용보증기금 창업·벤처 보증", "신용보증기금", "투자·융자", "창업기업 보증 및 자금 연계 상품.", "https://www.kodit.co.kr"),
+    mk("기술보증기금 기술평가 보증", "기술보증기금", "투자·융자", "기술력 기반 보증·평가. 벤처 확인 연계 가능.", "https://www.kibo.or.kr"),
+    mk("벤처기업 확인", "벤처인", "투자·융자", "벤처 확인 시 세제·금융 혜택 연계.", "https://www.smes.go.kr/venturein"),
+    mk("청년창업중소기업 세액감면", "국세청·세무사 확인", "세제혜택", "조세특례제한법 제6조. 대표자 연령·업종·지역에 따라 소득세/법인세 감면. 요건은 세무사와 확인.", "https://www.nts.go.kr", { youthOnly: true, maxYears: 5 }),
+    mk("기업부설연구소/연구개발전담부서 인정", "한국산업기술진흥협회", "세제혜택", "인정 시 R&D 인건비 세액공제 등 혜택. 요건 충족 여부 확인 필요.", "https://www.rnd.or.kr"),
+    mk("중소벤처기업부 공고", "중소벤처기업부", "포털·상시", "중소벤처기업부 신규 사업 공고/보도자료.", "https://www.mss.go.kr"),
+  ];
+}
+
+function grantDday(deadline) {
+  if (!deadline) return null;
+  const t = new Date(todayStr() + "T00:00:00");
+  const d = new Date(deadline + "T00:00:00");
+  if (isNaN(d)) return null;
+  return Math.round((d - t) / 86400000);
+}
+
+// 법인정보(설립일/주소) + 내 조건으로 해당 여부 판단: ok / check / no
+function grantFit(g, corp, profile) {
+  const reasons = [];
+  let level = "ok";
+  const down = (l) => { if (l === "no" || (l === "check" && level !== "no")) level = l; };
+  const founded = corp && corp.foundedDate ? new Date(corp.foundedDate) : null;
+  const years = founded && !isNaN(founded) ? (Date.now() - founded) / (365.25 * 86400000) : null;
+  if (g.maxYears) {
+    if (years === null) { down("check"); reasons.push("설립일 미입력(업력 " + g.maxYears + "년 이내)"); }
+    else if (years > g.maxYears) { down("no"); reasons.push("업력 " + years.toFixed(1) + "년 > " + g.maxYears + "년"); }
+    else reasons.push("업력 " + years.toFixed(1) + "년 (" + g.maxYears + "년 이내 OK)");
+  }
+  if (g.youthOnly) {
+    const age = Number(profile && profile.founderAge);
+    if (!age) { down("check"); reasons.push("대표자 나이 미입력"); }
+    else if (age > 39) { down("no"); reasons.push("대표자 " + age + "세 (청년 기준 초과)"); }
+    else reasons.push("대표자 " + age + "세 (청년 OK)");
+  }
+  if (g.region) {
+    const addr = (corp && corp.address) || "";
+    const reg = (profile && profile.region) || "";
+    const hay = addr + " " + reg;
+    if (!hay.trim()) { down("check"); reasons.push("소재지 미입력"); }
+    else if (hay.includes(g.region)) reasons.push("지역 일치(" + g.region + ")");
+    else { down("no"); reasons.push("지역 불일치(" + g.region + " 대상)"); }
+  }
+  if (!reasons.length) { level = "check"; reasons.push("자동 판단 조건 없음 — 공고문 확인"); }
+  return { level, reasons };
 }
 
 const Modules = {
@@ -311,221 +360,6 @@ const Modules = {
               : `<div class="empty">${isToday ? "뉴스를 찾지 못했어요." : "잠시 후 자동으로 오늘의 뉴스를 받아와요. 바로 보고 싶으면 위 새로고침을 눌러주세요."}</div>`
           }
         </div>
-      </div>
-    `;
-  },
-
-  // ---------------- 지원사업·정책 (스타트업/청년기업/창업기업 지원사업 한눈에 보기) ----------------
-  // 카탈로그(js/support.js)의 대표 지원사업을 우리 회사 프로필(법인정보 설립일 + 대표자 나이/근로자 수 등)과
-  // 비교해 "해당/확인 필요/대상 아님"을 자동으로 표시하고, 사업별 진행상태·마감일·메모를 드라이브에 저장해요.
-  // 필터(분야/해당만/검색)는 다시 그리지 않고 화면에서 바로 숨기고 보여주는 방식이에요 (app.js 참고).
-  async support(ctx) {
-    const [data, corp, issues] = await Promise.all([ctx.load("support"), ctx.load("corp"), ctx.load("issues")]);
-    const p = data.profile;
-    const years = supportBizYears(corp.foundedDate);
-    const age = supportCeoAge(p);
-    const catLabel = (key) => (SUPPORT_CATEGORIES.find((c) => c.key === key) || {}).label || "기타";
-    const regionLabel = (SUPPORT_REGIONS.find((r) => r.key === p.region) || {}).label || "미입력";
-
-    const all = [...SUPPORT_CATALOG, ...data.custom.map((c) => ({ ...c, custom: true }))];
-    const rows = all.map((item) => ({
-      item,
-      ev: item.custom ? { level: "check", reasons: ["직접 등록한 사업 — 공고문으로 요건 확인"] } : supportEvaluate(item.rule, p, corp.foundedDate),
-      track: data.tracks[item.id] || null,
-    }));
-    const okCount = rows.filter((r) => r.ev.level === "ok").length;
-    const checkCount = rows.filter((r) => r.ev.level === "check").length;
-    const levelOrder = { ok: 0, check: 1, done: 2, no: 3 };
-    rows.sort((a, b) => levelOrder[a.ev.level] - levelOrder[b.ev.level]);
-
-    const badge = (ev) =>
-      ({
-        ok: `<span class="tag tag-ok">✓ 해당</span>`,
-        check: `<span class="tag tag-wait">확인 필요</span>`,
-        no: `<span class="tag tag-no">대상 아님</span>`,
-        done: `<span class="tag tag-ok">보유 중</span>`,
-      }[ev.level]);
-    const dday = (date) => {
-      const d = supportParseDate(date);
-      if (!d) return "";
-      const today = new Date(todayStr() + "T00:00:00");
-      const diff = Math.round((d - today) / 86400000);
-      const cls = diff < 0 ? "" : diff <= 7 ? "tag-no" : diff <= 30 ? "tag-wait" : "";
-      return `<span class="tag ${cls}">${diff < 0 ? "마감" : diff === 0 ? "D-Day" : "D-" + diff}</span>`;
-    };
-
-    const tracked = rows
-      .filter((r) => r.track && r.track.status)
-      .sort((a, b) => (a.track.deadline || "9999").localeCompare(b.track.deadline || "9999"));
-    const supportNews = (issues.news || []).filter((n) => n.category === "지원사업").slice(0, 5);
-
-    const portal = (s) => `<a class="support-portal" href="${esc(s.link)}" target="_blank" rel="noopener"><b>${esc(s.name)} ↗</b><span>${esc(s.desc)}</span></a>`;
-    const card = ({ item, ev, track }) => {
-      const note = typeof item.note === "function" ? item.note(p) : "";
-      const searchText = [item.name, item.org, item.summary, item.target, item.benefit].join(" ").toLowerCase();
-      const searchLink = "https://search.naver.com/search.naver?query=" + encodeURIComponent(new Date().getFullYear() + " " + item.name + " 공고");
-      return `
-        <div class="panel support-card" data-cat="${esc(item.cat)}" data-level="${ev.level}" data-text="${esc(searchText)}">
-          <div class="support-card-head">
-            <div>
-              <span class="tag">${esc(catLabel(item.cat))}</span>${badge(ev)}${track && track.deadline ? dday(track.deadline) : ""}
-              <div class="support-name">${esc(item.name)}</div>
-              <div class="doc-meta">${esc(item.org || "")}</div>
-            </div>
-          </div>
-          ${item.summary ? `<div class="support-summary">${esc(item.summary)}</div>` : ""}
-          <table class="kv support-kv"><tbody>
-            ${item.benefit ? `<tr><th>지원내용</th><td>${esc(item.benefit)}</td></tr>` : ""}
-            ${item.target ? `<tr><th>대상</th><td>${esc(item.target)}</td></tr>` : ""}
-            ${item.period ? `<tr><th>시기</th><td>${esc(item.period)}</td></tr>` : ""}
-          </tbody></table>
-          <div class="support-reason ${ev.level}">${esc(ev.reasons.join(" · "))}${note ? `<br>💡 ${esc(note)}` : ""}</div>
-          ${track && track.memo ? `<div class="support-memo">📝 ${esc(track.memo)}</div>` : ""}
-          <div class="support-actions">
-            <select data-support-status="${esc(item.id)}">
-              <option value="">진행상태 —</option>
-              ${SUPPORT_STATUSES.map((s) => `<option ${track && track.status === s ? "selected" : ""}>${s}</option>`).join("")}
-            </select>
-            <button class="btn btn-tiny btn-secondary" data-support-track="${esc(item.id)}">마감일·메모</button>
-            <a class="btn btn-tiny btn-secondary" href="${esc(searchLink)}" target="_blank" rel="noopener">최신 공고 검색</a>
-            ${item.link ? `<a class="btn btn-tiny btn-secondary" href="${esc(item.link)}" target="_blank" rel="noopener">공식 사이트 ↗</a>` : ""}
-            ${item.custom ? `<button class="btn btn-tiny btn-danger" data-support-del="${esc(item.id)}">삭제</button>` : ""}
-          </div>
-        </div>`;
-    };
-
-    return `
-      <div class="grid grid-4">
-        <div class="stat-card"><div class="stat-label">업력 (법인설립일 기준)</div><div class="stat-value">${years != null ? supportFormatYears(years) : "-"}</div><div class="muted" style="margin-left:0">${years != null ? esc(corp.foundedDate) + " 설립" : "법인정보에 설립일을 입력해주세요"}</div></div>
-        <div class="stat-card"><div class="stat-label">대표자 나이</div><div class="stat-value">${age != null ? "만 " + age + "세" : "-"}</div><div class="muted" style="margin-left:0">${age != null ? (age <= 34 ? "청년창업(만 34세 이하) 해당" : age <= 39 ? "청년(만 39세 이하) 해당" : "청년 요건 초과") : "프로필에 생년월일 입력"}</div></div>
-        <div class="stat-card"><div class="stat-label">상시근로자 · 소재지</div><div class="stat-value">${p.employees !== "" ? esc(p.employees) + "명" : "-"}</div><div class="muted" style="margin-left:0">${esc(regionLabel)}</div></div>
-        <div class="stat-card"><div class="stat-label">지원 가능 사업</div><div class="stat-value">${okCount}건</div><div class="muted" style="margin-left:0">+ 확인 필요 ${checkCount}건</div></div>
-      </div>
-
-      <div class="panel" style="margin-bottom:16px">
-        <div class="toolbar" style="justify-content:space-between; align-items:center; margin-bottom:8px">
-          <h3 style="margin:0">우리 회사 지원 자격 프로필</h3>
-          <div class="quick-actions">
-            <button class="btn btn-tiny btn-secondary" id="editSupportProfileBtn">프로필 수정</button>
-            <button class="btn btn-tiny btn-primary" id="addSupportBtn">+ 사업 직접 추가</button>
-          </div>
-        </div>
-        <p class="hint" style="margin:0">설립일은 법인정보 탭 값을 그대로 써요. 대표자 생년월일·근로자 수·소재지를 입력해두면 업력/청년/고용 요건을 자동으로 판정해드려요.
-          ${p.industry ? `<br>주력 분야: <b>${esc(p.industry)}</b>` : ""}${p.isVenture ? ` · <span class="tag tag-ok">벤처기업</span>` : ""}${p.hasLab ? `<span class="tag tag-ok">기업부설연구소</span>` : ""}</p>
-      </div>
-
-      <div class="grid grid-2">
-        <div class="panel">
-          <h3>내가 챙기는 사업 (${tracked.length})</h3>
-          ${
-            tracked.length
-              ? tracked
-                  .map(
-                    ({ item, track }) => `
-              <div class="list-row"><div><span class="tag ${track.status === "선정" ? "tag-ok" : track.status === "탈락" ? "tag-no" : track.status === "신청완료" ? "tag-wait" : ""}">${esc(track.status)}</span><b>${esc(item.name)}</b>${track.deadline ? `<span class="muted">${esc(track.deadline)} 마감</span>` : ""}</div><div>${track.deadline ? dday(track.deadline) : ""}</div></div>`
-                  )
-                  .join("")
-              : `<div class="empty">아래 카드에서 진행상태를 고르면 여기에 모여요. 마감일을 넣으면 D-day도 보여드려요.</div>`
-          }
-        </div>
-        <div class="panel">
-          <h3>실시간 공고 바로가기</h3>
-          <div class="support-portals">
-            ${SUPPORT_PORTALS.map(portal).join("")}
-          </div>
-          ${p.region === "gwangju" ? `<h4>광주 지역</h4><div class="support-portals">${SUPPORT_PORTALS_GWANGJU.map(portal).join("")}</div>` : ""}
-          ${
-            supportNews.length
-              ? `<h4>지원사업 관련 뉴스 ${issues.date ? `<span class="muted">(${esc(issues.date)})</span>` : ""}</h4>` +
-                supportNews.map((n) => `<div class="list-row"><div><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a></div></div>`).join("")
-              : ""
-          }
-        </div>
-      </div>
-
-      <div class="panel" style="margin-bottom:16px">
-        <div class="support-filter">
-          <div class="support-chips">
-            <button class="support-chip active" data-support-cat="all">전체</button>
-            ${SUPPORT_CATEGORIES.map((c) => `<button class="support-chip" data-support-cat="${c.key}">${esc(c.label)}</button>`).join("")}
-          </div>
-          <div class="support-filter-right">
-            <label class="filter-inline"><input type="checkbox" id="supportEligOnly"> 대상 아님 숨기기</label>
-            <input id="supportSearch" class="support-search" placeholder="사업명·기관·키워드 검색">
-          </div>
-        </div>
-        <p class="hint" style="margin:10px 0 0">정부 지원사업은 매년 공고가 새로 나고 금액·요건이 바뀌어요. 여기 내용은 2026년 통합공고 기준의 요약이니, 신청 전에 꼭 "최신 공고 검색"으로 올해 공고문을 확인하세요.</p>
-      </div>
-
-      <div class="support-grid" id="supportGrid">
-        ${rows.map(card).join("")}
-      </div>
-      <div class="empty" id="supportNoResult" style="display:none">조건에 맞는 사업이 없어요.</div>
-    `;
-  },
-
-  supportProfileForm(p) {
-    return `
-      <h3>지원 자격 프로필</h3>
-      <div class="form-grid">
-        <label>대표자 생년월일 <input type="date" id="sp_ceoBirth" value="${esc(p.ceoBirth)}"></label>
-        <label>본사 소재지
-          <select id="sp_region">
-            <option value="">선택</option>
-            ${SUPPORT_REGIONS.map((r) => `<option value="${r.key}" ${p.region === r.key ? "selected" : ""}>${esc(r.label)}</option>`).join("")}
-          </select>
-        </label>
-        <label>상시근로자 수 (고용보험 피보험자, 대표 제외) <input type="number" min="0" id="sp_employees" value="${esc(p.employees)}" placeholder="예: 3"></label>
-        <label>주력 분야/업종 <input id="sp_industry" value="${esc(p.industry)}" placeholder="예: AI 콘텐츠 제작, SNS 마케팅"></label>
-        <label class="checkbox-label"><input type="checkbox" id="sp_isVenture" ${p.isVenture ? "checked" : ""}> 벤처기업 확인 보유</label>
-        <label class="checkbox-label"><input type="checkbox" id="sp_hasLab" ${p.hasLab ? "checked" : ""}> 기업부설연구소/연구개발전담부서 보유</label>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-secondary" data-close>취소</button>
-        <button class="btn btn-primary" id="saveSupportProfileBtn">저장</button>
-      </div>
-    `;
-  },
-
-  supportTrackForm(item, track) {
-    const t = track || {};
-    return `
-      <h3>${esc(item.name)}</h3>
-      <div class="form-grid">
-        <label>진행상태
-          <select id="st_status">
-            <option value="">—</option>
-            ${SUPPORT_STATUSES.map((s) => `<option ${t.status === s ? "selected" : ""}>${s}</option>`).join("")}
-          </select>
-        </label>
-        <label>신청 마감일 <input type="date" id="st_deadline" value="${esc(t.deadline || "")}"></label>
-        <label>메모 <textarea id="st_memo" rows="4" placeholder="예: 사업계획서 초안 작성 중, 담당자 연락처 등">${esc(t.memo || "")}</textarea></label>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-secondary" data-close>취소</button>
-        <button class="btn btn-primary" id="saveSupportTrackBtn">저장</button>
-      </div>
-    `;
-  },
-
-  supportCustomForm() {
-    return `
-      <h3>지원사업 직접 추가</h3>
-      <p class="hint">기업마당·K-Startup 등에서 찾은 공고를 우리 회사 목록에 추가해두세요.</p>
-      <div class="form-grid">
-        <label>사업명 <input id="sc_name" placeholder="예: 2026 서울시 청년창업 지원사업"></label>
-        <label>주관기관 <input id="sc_org" placeholder="예: 서울경제진흥원"></label>
-        <label>분야
-          <select id="sc_cat">${SUPPORT_CATEGORIES.map((c) => `<option value="${c.key}">${esc(c.label)}</option>`).join("")}</select>
-        </label>
-        <label>지원내용 <input id="sc_benefit" placeholder="예: 사업화 자금 최대 5천만 원"></label>
-        <label>대상 <input id="sc_target" placeholder="예: 서울 소재 업력 3년 이내"></label>
-        <label>공고 링크 <input id="sc_link" placeholder="https://"></label>
-        <label>신청 마감일 <input type="date" id="sc_deadline"></label>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-secondary" data-close>취소</button>
-        <button class="btn btn-primary" id="saveSupportCustomBtn">추가</button>
       </div>
     `;
   },
@@ -710,6 +544,9 @@ const Modules = {
         </label>
         <label>페이지
           <select id="f_sealPageNum"></select>
+        </label>
+        <label>도장 크기 <span id="sealSizeLabel" class="muted">19mm</span>
+          <input type="range" id="f_sealSize" min="28" max="120" step="2" value="54">
         </label>
       </div>
       <p class="hint" style="margin-top:-4px">아래 서류 미리보기에서 도장을 찍을 위치를 클릭하세요. 여러 곳을 클릭해서 도장을 여러 군데 찍을 수 있어요. (이미 찍은 위치를 다시 클릭하면 삭제돼요)</p>
@@ -1040,6 +877,115 @@ const Modules = {
   },
 
   // ---------------- 회계관리 : 사업소득 신고내역 ----------------
+  async grants(ctx) {
+    const data = await ctx.load("grants");
+    const corp = normalizeCorp(await ctx.load("corp"));
+    const f = ctx.grantFilters || {};
+    const items = data.items || [];
+    const profile = data.profile || {};
+    const rows = items.map((g) => ({ g, dd: grantDday(g.deadline), fit: grantFit(g, corp, profile) }));
+    const shown = rows
+      .filter((r) => (f.category || "all") === "all" || r.g.category === f.category)
+      .filter((r) => (f.status || "all") === "all" || r.g.status === f.status)
+      .filter((r) => (f.fit || "all") === "all" || r.fit.level === f.fit)
+      .filter((r) => f.showExpired || r.dd === null || r.dd >= 0)
+      .sort((a, b) => {
+        const av = a.dd === null ? 1e9 : a.dd, bv = b.dd === null ? 1e9 : b.dd;
+        return av - bv || a.g.title.localeCompare(b.g.title);
+      });
+    const opt = (list, cur, all) => `<option value="all">${all}</option>` + list.map((x) => `<option ${cur === x ? "selected" : ""}>${esc(x)}</option>`).join("");
+    const fitLabel = { ok: ["tag-ok", "해당"], check: ["tag-wait", "확인필요"], no: ["tag-no", "미해당"] };
+    const ddTag = (dd) => dd === null ? `<span class="tag">상시/미정</span>` :
+      dd < 0 ? `<span class="tag tag-no">마감 D+${-dd}</span>` :
+      dd <= 7 ? `<span class="tag tag-no">D-${dd === 0 ? "Day" : dd}</span>` :
+      dd <= 30 ? `<span class="tag tag-wait">D-${dd}</span>` : `<span class="tag">D-${dd}</span>`;
+    const cards = shown.map(({ g, dd, fit }) => `
+      <div class="panel" style="margin-bottom:10px;">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          ${ddTag(dd)}<span class="tag">${esc(g.category)}</span>
+          <span class="tag ${fitLabel[fit.level][0]}">${fitLabel[fit.level][1]}</span>
+          ${g.source === "ai" ? `<span class="tag">AI 검색</span>` : ""}
+          <strong style="flex:1; min-width:200px;">${g.url ? `<a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.title)}</a>` : esc(g.title)}</strong>
+          <select data-grant-status="${esc(g.id)}">${GRANT_STATUSES.map((s) => `<option ${g.status === s ? "selected" : ""}>${s}</option>`).join("")}</select>
+        </div>
+        <div class="muted" style="margin-top:6px; font-size:12.5px;">
+          ${esc(g.org)}${g.amount ? " · " + esc(g.amount) : ""}${g.target ? " · 대상: " + esc(g.target) : ""}
+          ${g.deadline ? " · 마감 " + esc(g.deadline) : ""}${g.applyStart ? " (접수 " + esc(g.applyStart) + "~)" : ""}
+        </div>
+        ${g.summary ? `<div style="margin-top:6px; font-size:13px;">${esc(g.summary)}</div>` : ""}
+        <div class="hint" style="margin-top:6px;">판단 근거: ${esc(fit.reasons.join(" / "))}</div>
+        ${g.memo ? `<div class="hint">메모: ${esc(g.memo)}</div>` : ""}
+        <div style="margin-top:8px;">
+          <button class="btn btn-secondary" data-edit-grant="${esc(g.id)}">수정</button>
+          <button class="btn btn-secondary" data-del-grant="${esc(g.id)}">삭제</button>
+        </div>
+      </div>`).join("");
+    return `
+      <div class="toolbar" style="gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-secondary" id="grantProfileBtn">내 조건 설정</button>
+        <button class="btn btn-secondary" id="newGrantBtn">+ 직접 추가</button>
+        <button class="btn btn-primary" id="grantAiBtn">AI로 최신 지원사업 검색</button>
+      </div>
+      <div class="panel">
+        <div class="filter-inline" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <select id="grantCatFilter">${opt(GRANT_CATEGORIES, f.category, "분류 전체")}</select>
+          <select id="grantStatusFilter">${opt(GRANT_STATUSES, f.status, "진행상태 전체")}</select>
+          <select id="grantFitFilter">
+            <option value="all">해당여부 전체</option>
+            <option value="ok" ${f.fit === "ok" ? "selected" : ""}>해당</option>
+            <option value="check" ${f.fit === "check" ? "selected" : ""}>확인필요</option>
+            <option value="no" ${f.fit === "no" ? "selected" : ""}>미해당</option>
+          </select>
+          <label><input type="checkbox" id="grantExpiredChk" ${f.showExpired ? "checked" : ""}> 마감된 공고도 보기</label>
+          <span class="muted">${shown.length}건 · 마감 임박순${data.lastFetched ? " · 마지막 AI 검색 " + esc(data.lastFetched) : ""}</span>
+        </div>
+        <p class="hint" style="margin-top:8px;">해당 여부는 법인정보(설립일·주소)와 '내 조건'으로 자동 판단한 참고용이에요. 신청 전에 반드시 공고문 원문의 자격요건·마감일을 확인하세요.</p>
+      </div>
+      ${cards || `<div class="panel muted">조건에 맞는 지원사업이 없어요.</div>`}`;
+  },
+
+  grantForm(g) {
+    const it = g || { title: "", org: "", category: "창업지원", target: "", amount: "", applyStart: "", deadline: "", url: "", summary: "", maxYears: 0, youthOnly: false, region: "", memo: "" };
+    return `
+      <h3>${g ? "지원사업 수정" : "지원사업 추가"}</h3>
+      <div class="form-grid">
+        <label>사업명 <input id="g_title" value="${esc(it.title)}"></label>
+        <label>주관기관 <input id="g_org" value="${esc(it.org)}"></label>
+        <label>분류 <select id="g_category">${GRANT_CATEGORIES.map((c) => `<option ${it.category === c ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+        <label>지원 규모 <input id="g_amount" placeholder="예: 최대 1억원" value="${esc(it.amount)}"></label>
+        <label>지원 대상 <input id="g_target" value="${esc(it.target)}"></label>
+        <label>접수 시작일 <input type="date" id="g_applyStart" value="${esc(it.applyStart)}"></label>
+        <label>마감일 (비우면 상시) <input type="date" id="g_deadline" value="${esc(it.deadline)}"></label>
+        <label>링크(URL) <input id="g_url" value="${esc(it.url)}"></label>
+        <label>업력 제한 (년 이내, 없으면 0) <input type="number" id="g_maxYears" min="0" value="${esc(it.maxYears || 0)}"></label>
+        <label>지역 제한 (예: 서울, 없으면 비움) <input id="g_region" value="${esc(it.region || "")}"></label>
+        <label><input type="checkbox" id="g_youth" ${it.youthOnly ? "checked" : ""}> 청년(만 39세 이하) 대표자 대상</label>
+        <label>요약 <input id="g_summary" value="${esc(it.summary || "")}"></label>
+        <label>메모 <input id="g_memo" value="${esc(it.memo || "")}"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="saveGrantBtn" data-id="${g ? esc(g.id) : ""}">${g ? "수정 완료" : "추가"}</button>
+      </div>`;
+  },
+
+  grantProfileForm(p) {
+    p = p || {};
+    return `
+      <h3>내 조건 설정</h3>
+      <p class="hint">설립일·주소는 '법인정보' 탭 내용을 그대로 사용해요. 아래는 법인정보에 없는 항목이에요.</p>
+      <div class="form-grid">
+        <label>대표자 나이(만) <input type="number" id="p_age" min="0" value="${esc(p.founderAge || "")}"></label>
+        <label>소재 지역 (예: 서울, 경기 성남) <input id="p_region" value="${esc(p.region || "")}"></label>
+        <label>업종/분야 (AI 검색에 사용) <input id="p_industry" placeholder="예: 콘텐츠, 커머스, 쇼호스트 에이전시" value="${esc(p.industry || "")}"></label>
+        <label>직원 수 <input type="number" id="p_emp" min="0" value="${esc(p.employees || "")}"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-close>취소</button>
+        <button class="btn btn-primary" id="saveGrantProfileBtn">저장</button>
+      </div>`;
+  },
+
   async accounting(ctx) {
     const data = await ctx.load("accounting");
     const sub = ctx.accountingSubTab || "biztax";

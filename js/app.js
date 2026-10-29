@@ -6,6 +6,7 @@ let corpSubTab = "info"; // 법인정보 탭 내부 하위탭: "info" | "seal"
 let snsSubTab = "content"; // SNS 탭 내부 하위탭: "content" | "trends" | "analytics"
 let accountingSubTab = "biztax"; // 회계관리 탭 내부 하위탭: "biztax"(사업소득 신고내역) — 나중에 항목이 늘어날 수 있어요
 let bizTaxMonthFilter = "all"; // 사업소득 신고내역 지급월 필터: "all" 또는 "YYYY-MM"
+let grantFilters = { category: "all", status: "all", fit: "all", showExpired: false }; // 지원사업 필터
 const cache = {}; // 모듈별 로드된 데이터 캐시 (탭 전환 시 재사용, 저장 후 무효화)
 
 // AI 콘텐츠 생성 모달의 임시 상태 (모달 열려있는 동안만 메모리에 보관)
@@ -185,7 +186,6 @@ async function loadModule(name, force) {
     let data = await Drive.readCollection(dataFolderId, FILES[name], DEFAULTS[name]);
     if (name === "corp") data = normalizeCorp(data);
     if (name === "sns") data = normalizeSns(data);
-    if (name === "support") data = normalizeSupport(data);
     cache[name] = data;
     setSyncStatus("동기화됨", false);
     return data;
@@ -219,6 +219,9 @@ const ctx = {
   get bizTaxMonthFilter() {
     return bizTaxMonthFilter;
   },
+  get grantFilters() {
+    return grantFilters;
+  },
   get studioDraftId() {
     return studioDraftId;
   },
@@ -238,7 +241,6 @@ const ctx = {
 const TAB_TITLES = {
   dashboard: "대시보드",
   issues: "오늘의 이슈",
-  support: "지원사업·정책",
   corp: "법인정보",
   notice: "공지사항",
   calendar: "일정/캘린더",
@@ -246,6 +248,7 @@ const TAB_TITLES = {
   contract: "전자계약",
   attendance: "근태관리",
   accounting: "회계관리",
+  grants: "지원사업",
   sns: "SNS 운영",
   shorts: "쇼츠 스튜디오",
   postStudio: "게시물 스튜디오",
@@ -275,6 +278,7 @@ async function goTab(tab) {
   currentTab = tab;
   if (tab === "corp") corpSubTab = "info";
   if (tab === "sns") snsSubTab = "content";
+  if (tab === "grants") grantFilters = { category: "all", status: "all", fit: "all", showExpired: false };
   if (tab === "accounting") { accountingSubTab = "biztax"; bizTaxMonthFilter = "all"; }
   $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("#pageTitle").textContent = TAB_TITLES[tab];
@@ -438,6 +442,7 @@ async function toPdfBytes(file) {
 
 // 서류 미리보기를 캔버스에 그리고, 사용자가 클릭한 위치를 기억해뒀다가
 // "날인하기"를 누르면 그 좌표에 정확히 도장을 찍습니다.
+const SEAL_STAMP_HEIGHT_PT = 54; // 법인도장 날인 높이(pt) ≈ 19mm — 실제 인감 크기
 let sealPlaceState = null;
 async function setupSealPlacer(pdfBytes, fileName, seals) {
   const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(), cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/", cMapPacked: true, standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/" }).promise;
@@ -450,7 +455,7 @@ async function setupSealPlacer(pdfBytes, fileName, seals) {
   ).join("");
   pageSelect.value = String(pageCount);
 
-  sealPlaceState = { pdfBytes, fileName, pageIndex: pageCount - 1, points: [], viewport: null, sealType: null, sealDataUrl: null };
+  sealPlaceState = { pdfBytes, fileName, pageIndex: pageCount - 1, points: [], viewport: null, sealType: null, sealDataUrl: null, sizePt: SEAL_STAMP_HEIGHT_PT };
 
   const updateMarkerSrc = () => {
     const sealType = $("#f_sealType").value;
@@ -460,6 +465,19 @@ async function setupSealPlacer(pdfBytes, fileName, seals) {
   };
   updateMarkerSrc();
   $("#f_sealType").addEventListener("change", updateMarkerSrc);
+
+  // 도장 크기 조절: 미리보기와 실제 날인 크기가 항상 같아요(슬라이더 값 = 실제 도장 높이).
+  const sizeInput = $("#f_sealSize");
+  if (sizeInput) {
+    sizeInput.value = String(SEAL_STAMP_HEIGHT_PT);
+    sizeInput.addEventListener("input", () => {
+      sealPlaceState.sizePt = Number(sizeInput.value);
+      sealPlaceState.points.forEach((pt) => { pt.sizePt = sealPlaceState.sizePt; });
+      const mm = Math.round(sealPlaceState.sizePt * 0.3528);
+      $("#sealSizeLabel").textContent = mm + "mm";
+      redrawMarkers();
+    });
+  }
 
   function updatePlaceHint() {
     const hint = $("#sealPlaceCount");
@@ -476,15 +494,19 @@ async function setupSealPlacer(pdfBytes, fileName, seals) {
     sealPlaceState.points
       .filter((p) => p.pageIndex === sealPlaceState.pageIndex)
       .forEach((p) => {
-        const markerSize = 64;
         const marker = document.createElement("img");
         marker.dataset.dynMarker = "1";
         marker.src = p.sealDataUrl;
         marker.alt = "도장 미리보기";
         marker.style.cssText = "position:absolute; cursor:pointer; opacity:0.92;";
-        marker.style.width = markerSize + "px";
-        marker.style.left = p.x - markerSize / 2 + "px";
-        marker.style.top = p.y - markerSize / 2 + "px";
+        // 실제 날인 크기(SEAL_STAMP_HEIGHT_PT)와 같은 비율로 미리보기 — 중심은 클릭한 위치
+        const cv = $("#sealPlaceCanvas");
+        const cssScale = cv.width ? cv.getBoundingClientRect().width / cv.width : 1;
+        marker.style.height = (sealPlaceState.sizePt * p.scale * cssScale) + "px";
+        marker.style.width = "auto";
+        marker.style.left = p.x * cssScale + "px";
+        marker.style.top = p.y * cssScale + "px";
+        marker.style.transform = "translate(-50%, -50%)";
         marker.addEventListener("click", (ev) => {
           ev.stopPropagation();
           const i = sealPlaceState.points.indexOf(p);
@@ -537,6 +559,7 @@ async function setupSealPlacer(pdfBytes, fileName, seals) {
       pageHeightPts: sealPlaceState.viewport.height / sealPlaceState.viewport.scale,
       sealType: sealPlaceState.sealType,
       sealDataUrl: sealPlaceState.sealDataUrl,
+      sizePt: sealPlaceState.sizePt,
     });
     redrawMarkers();
     updatePlaceHint();
@@ -671,7 +694,7 @@ async function stampAndSaveDocumentAt(state) {
       const pdfX = p.x / scale;
       const pdfY = pageHeightPts - p.y / scale;
 
-      const sealHeight = 90;
+      const sealHeight = p.sizePt || SEAL_STAMP_HEIGHT_PT;
       const sealWidth = sealHeight * (sealImg.width / sealImg.height);
       page.drawImage(sealImg, {
         x: pdfX - sealWidth / 2,
@@ -797,128 +820,6 @@ async function aiExtractBizTaxRows(file) {
   }));
 }
 
-// ---------------- 지원사업·정책 ----------------
-// 분야 칩/대상 아님 숨기기/검색어는 다시 그리지 않고 카드의 data-* 값으로 바로 숨겨요
-// (검색창에 타이핑하는 동안 포커스가 날아가지 않게). 탭에 다시 들어오면 필터는 초기화돼요.
-function applySupportFilter() {
-  const cat = $(".support-chip.active")?.dataset.supportCat || "all";
-  const hideNo = $("#supportEligOnly")?.checked;
-  const q = ($("#supportSearch")?.value || "").trim().toLowerCase();
-  let shown = 0;
-  $$("#supportGrid .support-card").forEach((el) => {
-    const visible = (cat === "all" || el.dataset.cat === cat) && !(hideNo && el.dataset.level === "no") && (!q || el.dataset.text.includes(q));
-    el.style.display = visible ? "" : "none";
-    if (visible) shown++;
-  });
-  const empty = $("#supportNoResult");
-  if (empty) empty.style.display = shown ? "none" : "";
-}
-
-function findSupportItem(data, id) {
-  return SUPPORT_CATALOG.find((x) => x.id === id) || data.custom.find((x) => x.id === id);
-}
-
-function bindSupportEvents() {
-  $$("[data-support-cat]").forEach((b) =>
-    b.addEventListener("click", () => {
-      $$("[data-support-cat]").forEach((x) => x.classList.toggle("active", x === b));
-      applySupportFilter();
-    })
-  );
-  $("#supportEligOnly")?.addEventListener("change", applySupportFilter);
-  $("#supportSearch")?.addEventListener("input", applySupportFilter);
-
-  $("#editSupportProfileBtn")?.addEventListener("click", async () => {
-    const data = await loadModule("support");
-    openModal(Modules.supportProfileForm(data.profile));
-    $("#saveSupportProfileBtn").addEventListener("click", async () => {
-      const d = await loadModule("support", true);
-      d.profile = {
-        ...d.profile,
-        ceoBirth: $("#sp_ceoBirth").value,
-        region: $("#sp_region").value,
-        employees: $("#sp_employees").value.trim(),
-        industry: $("#sp_industry").value.trim(),
-        isVenture: $("#sp_isVenture").checked,
-        hasLab: $("#sp_hasLab").checked,
-      };
-      await saveModule("support", d);
-      closeModal();
-      refreshCurrentTab();
-    });
-  });
-
-  $("#addSupportBtn")?.addEventListener("click", () => {
-    openModal(Modules.supportCustomForm());
-    $("#saveSupportCustomBtn").addEventListener("click", async () => {
-      const name = $("#sc_name").value.trim();
-      if (!name) return alert("사업명을 입력해주세요.");
-      const link = $("#sc_link").value.trim();
-      const d = await loadModule("support", true);
-      const id = "c_" + uid();
-      d.custom.push({
-        id,
-        name,
-        org: $("#sc_org").value.trim(),
-        cat: $("#sc_cat").value,
-        benefit: $("#sc_benefit").value.trim(),
-        target: $("#sc_target").value.trim(),
-        // 링크는 http(s) 주소만 저장해요 (javascript: 같은 주소가 버튼에 들어가지 않게).
-        link: /^https?:\/\//i.test(link) ? link : "",
-      });
-      const deadline = $("#sc_deadline").value;
-      d.tracks[id] = { status: "관심", deadline, memo: "", updatedAt: nowStr() };
-      await saveModule("support", d);
-      closeModal();
-      refreshCurrentTab();
-    });
-  });
-
-  $$("[data-support-status]").forEach((sel) =>
-    sel.addEventListener("change", async () => {
-      const id = sel.dataset.supportStatus;
-      const d = await loadModule("support", true);
-      d.tracks[id] = { ...(d.tracks[id] || {}), status: sel.value, updatedAt: nowStr() };
-      await saveModule("support", d);
-      refreshCurrentTab();
-    })
-  );
-
-  $$("[data-support-track]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      const id = b.dataset.supportTrack;
-      const data = await loadModule("support");
-      const item = findSupportItem(data, id);
-      if (!item) return;
-      openModal(Modules.supportTrackForm(item, data.tracks[id]));
-      $("#saveSupportTrackBtn").addEventListener("click", async () => {
-        const d = await loadModule("support", true);
-        d.tracks[id] = {
-          status: $("#st_status").value,
-          deadline: $("#st_deadline").value,
-          memo: $("#st_memo").value.trim(),
-          updatedAt: nowStr(),
-        };
-        await saveModule("support", d);
-        closeModal();
-        refreshCurrentTab();
-      });
-    })
-  );
-
-  $$("[data-support-del]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      if (!confirm("이 사업을 목록에서 삭제할까요?")) return;
-      const id = b.dataset.supportDel;
-      const d = await loadModule("support", true);
-      d.custom = d.custom.filter((x) => x.id !== id);
-      delete d.tracks[id];
-      await saveModule("support", d);
-      refreshCurrentTab();
-    })
-  );
-}
-
 // ---------------- 탭별 이벤트 바인딩 ----------------
 function bindTabEvents(tab) {
   if (tab === "dashboard") {
@@ -929,8 +830,6 @@ function bindTabEvents(tab) {
     $("#fetchIssuesBtn")?.addEventListener("click", fetchDailyIssues);
     autoFetchDailyIssuesIfStale();
   }
-
-  if (tab === "support") bindSupportEvents();
 
   if (tab === "corp") {
     $$("[data-corp-subtab]").forEach((b) =>
@@ -1474,6 +1373,143 @@ function bindTabEvents(tab) {
     $$("[data-leave-reject]").forEach((b) =>
       b.addEventListener("click", () => decideLeave(b.dataset.leaveReject, "반려"))
     );
+  }
+
+  if (tab === "grants") {
+    const loadGrants = async () => {
+      const d = await loadModule("grants");
+      if (!d.items) { d.items = grantSeed(); await saveModule("grants", d); }
+      d.profile = d.profile || {};
+      return d;
+    };
+    // 최초 진입 시 기본 목록이 비어 있으면 채우고 다시 그려요.
+    loadModule("grants").then(async (d) => {
+      if (!d.items) { await loadGrants(); refreshCurrentTab(); }
+    });
+    $("#grantCatFilter")?.addEventListener("change", (e) => { grantFilters.category = e.target.value; refreshCurrentTab(); });
+    $("#grantStatusFilter")?.addEventListener("change", (e) => { grantFilters.status = e.target.value; refreshCurrentTab(); });
+    $("#grantFitFilter")?.addEventListener("change", (e) => { grantFilters.fit = e.target.value; refreshCurrentTab(); });
+    $("#grantExpiredChk")?.addEventListener("change", (e) => { grantFilters.showExpired = e.target.checked; refreshCurrentTab(); });
+
+    $$("[data-grant-status]").forEach((s) =>
+      s.addEventListener("change", async () => {
+        const d = await loadGrants();
+        const g = d.items.find((x) => x.id === s.dataset.grantStatus);
+        if (g) { g.status = s.value; await saveModule("grants", d); refreshCurrentTab(); }
+      })
+    );
+
+    const openGrantForm = (g) => {
+      openModal(Modules.grantForm(g), { wide: true });
+      $("#saveGrantBtn").addEventListener("click", async () => {
+        const title = $("#g_title").value.trim();
+        if (!title) { alert("사업명을 입력해주세요."); return; }
+        const d = await loadGrants();
+        const id = $("#saveGrantBtn").dataset.id;
+        const prev = id ? d.items.find((x) => x.id === id) : null;
+        const rec = {
+          ...(prev || { status: "미검토", source: "manual", createdAt: nowStr() }),
+          id: id || uid(),
+          title,
+          org: $("#g_org").value.trim(),
+          category: $("#g_category").value,
+          amount: $("#g_amount").value.trim(),
+          target: $("#g_target").value.trim(),
+          applyStart: $("#g_applyStart").value,
+          deadline: $("#g_deadline").value,
+          url: $("#g_url").value.trim(),
+          maxYears: Number($("#g_maxYears").value) || 0,
+          region: $("#g_region").value.trim(),
+          youthOnly: $("#g_youth").checked,
+          summary: $("#g_summary").value.trim(),
+          memo: $("#g_memo").value.trim(),
+        };
+        if (prev) d.items[d.items.indexOf(prev)] = rec; else d.items.push(rec);
+        await saveModule("grants", d);
+        closeModal();
+        refreshCurrentTab();
+      });
+    };
+    $("#newGrantBtn")?.addEventListener("click", () => openGrantForm(null));
+    $$("[data-edit-grant]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const d = await loadGrants();
+        const g = d.items.find((x) => x.id === b.dataset.editGrant);
+        if (g) openGrantForm(g);
+      })
+    );
+    $$("[data-del-grant]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        if (!confirm("이 지원사업을 목록에서 삭제할까요?")) return;
+        const d = await loadGrants();
+        d.items = d.items.filter((x) => x.id !== b.dataset.delGrant);
+        await saveModule("grants", d);
+        refreshCurrentTab();
+      })
+    );
+
+    $("#grantProfileBtn")?.addEventListener("click", async () => {
+      const d = await loadGrants();
+      openModal(Modules.grantProfileForm(d.profile));
+      $("#saveGrantProfileBtn").addEventListener("click", async () => {
+        d.profile = {
+          founderAge: $("#p_age").value.trim(),
+          region: $("#p_region").value.trim(),
+          industry: $("#p_industry").value.trim(),
+          employees: $("#p_emp").value.trim(),
+        };
+        await saveModule("grants", d);
+        closeModal();
+        refreshCurrentTab();
+      });
+    });
+
+    // AI 검색: 워커의 /grants-search 가 웹을 검색해 공고 목록을 돌려주면, 중복을 걸러 '미검토'로 추가해요.
+    $("#grantAiBtn")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      if (!CONFIG.AI_WORKER_URL) { alert("AI 서버 주소가 설정되어 있지 않아요."); return; }
+      const d = await loadGrants();
+      const corp = normalizeCorp(await loadModule("corp"));
+      const orig = btn.textContent;
+      btn.textContent = "검색 중... (최대 1분)";
+      btn.disabled = true;
+      try {
+        const res = await fetch(CONFIG.AI_WORKER_URL.replace(/\/$/, "") + "/grants-search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            today: todayStr(),
+            profile: { ...d.profile, foundedDate: corp.foundedDate, address: corp.address, company: corp.name },
+          }),
+        });
+        if (!res.ok) throw new Error("서버 응답 오류 " + res.status);
+        const json = await res.json();
+        const found = Array.isArray(json.items) ? json.items : [];
+        const keyOf = (g) => (g.url || g.title || "").trim().toLowerCase();
+        const have = new Set(d.items.map(keyOf));
+        let added = 0;
+        found.forEach((x) => {
+          if (!x || !x.title || have.has(keyOf(x))) return;
+          have.add(keyOf(x));
+          d.items.push({
+            id: uid(), title: String(x.title), org: x.org || "", category: GRANT_CATEGORIES.includes(x.category) ? x.category : "창업지원",
+            target: x.target || "", amount: x.amount || "", applyStart: x.applyStart || "", deadline: x.deadline || "",
+            url: x.url || "", summary: x.summary || "", maxYears: Number(x.maxYears) || 0, youthOnly: !!x.youthOnly,
+            region: x.region || "", status: "미검토", memo: "", source: "ai", createdAt: nowStr(),
+          });
+          added++;
+        });
+        d.lastFetched = nowStr();
+        await saveModule("grants", d);
+        alert(added ? added + "건을 새로 추가했어요. 마감일·자격요건은 공고 원문에서 꼭 확인하세요." : "새로 추가할 공고가 없었어요.");
+        refreshCurrentTab();
+      } catch (err) {
+        console.error(err);
+        alert("AI 검색에 실패했어요. (" + err.message + ")\nAI 서버(Cloudflare Worker)에 /grants-search 기능이 추가되어 있어야 해요.");
+        btn.textContent = orig;
+        btn.disabled = false;
+      }
+    });
   }
 
   if (tab === "accounting") {
