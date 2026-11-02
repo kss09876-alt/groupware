@@ -1494,6 +1494,7 @@ function bindTabEvents(tab) {
   }
 
   if (tab === "accounting") {
+    if (typeof bindBank === "function") bindBank();
     $$("[data-accounting-subtab]").forEach((b) =>
       b.addEventListener("click", () => {
         accountingSubTab = b.dataset.accountingSubtab;

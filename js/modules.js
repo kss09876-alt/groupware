@@ -78,6 +78,7 @@ const DEFAULTS = {
   },
   accounting: {
     bizTaxItems: [],
+    bankTx: [],
   },
   contracts: {
     items: [],
@@ -1046,10 +1047,11 @@ const Modules = {
   async accounting(ctx) {
     const data = await ctx.load("accounting");
     const sub = ctx.accountingSubTab || "biztax";
-    const nav = `
-      <div class="subtab-nav">
-        <button class="subtab-btn ${sub === "biztax" ? "active" : ""}" data-accounting-subtab="biztax">사업소득 신고내역</button>
-      </div>`;
+    const nav = bankSubtabNav(sub);
+    if (sub !== "biztax") {
+      const corp = sub === "tax" ? normalizeCorp(await ctx.load("corp")) : null;
+      return nav + bankSubBody(sub, data, corp);
+    }
     const body = Modules.bizTaxBody(data, ctx.bizTaxMonthFilter || "all");
     return nav + body;
   },
